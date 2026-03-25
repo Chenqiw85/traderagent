@@ -10,7 +10,7 @@ type OpenAIConfig = {
 }
 
 export class OpenAIProvider implements ILLMProvider {
-  readonly name = 'openai'
+  readonly name: string = 'openai'
   private client: OpenAI
   private model: string
 
