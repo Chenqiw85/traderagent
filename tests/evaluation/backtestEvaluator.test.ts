@@ -41,8 +41,8 @@ describe('BacktestEvaluator', () => {
     ]
     const evaluator = new BacktestEvaluator(entries)
     const result = await evaluator.runBacktest()
-    expect(result.breakdown).toHaveProperty('sharpeRatio')
-    expect(result.breakdown).toHaveProperty('maxDrawdown')
+    expect(result.breakdown.sharpeRatio).toBeCloseTo(2.121, 2)
+    expect(result.breakdown.maxDrawdown).toBeCloseTo(0, 5)
   })
 
   it('evaluate() delegates to runBacktest()', async () => {

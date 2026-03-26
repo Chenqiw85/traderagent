@@ -28,6 +28,7 @@ export class BacktestEvaluator implements IEvaluator {
     )
 
     const avgScore = results.reduce((sum, r) => sum + r.score, 0) / results.length
+    // directionalAccuracy === 1 means a correct directional call (from AccuracyEvaluator breakdown)
     const winRate =
       results.filter((r) => r.breakdown.directionalAccuracy === 1).length / results.length
 
@@ -35,6 +36,7 @@ export class BacktestEvaluator implements IEvaluator {
       .filter((e) => e.report.finalDecision?.action === 'BUY')
       .map((e) => e.actualReturn)
     const sharpeRatio = this.computeSharpe(buyReturns)
+    // maxDrawdown uses all entries (not BUY-only) to reflect total portfolio exposure
     const maxDrawdown = this.computeMaxDrawdown(this.entries.map((e) => e.actualReturn))
 
     return {
@@ -45,9 +47,9 @@ export class BacktestEvaluator implements IEvaluator {
   }
 
   private computeSharpe(returns: number[]): number {
-    if (returns.length === 0) return 0
+    if (returns.length < 2) return 0
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length
-    const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / returns.length
+    const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (returns.length - 1)
     const stdDev = Math.sqrt(variance)
     return stdDev === 0 ? 0 : mean / stdDev
   }
