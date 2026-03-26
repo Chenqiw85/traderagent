@@ -1,0 +1,65 @@
+import type { IAgent } from '../agents/base/IAgent.js'
+import type { Market, TradingReport } from '../agents/base/types.js'
+
+type OrchestratorConfig = {
+  dataFetcher?: IAgent
+  researcherTeam: IAgent[]
+  riskTeam: IAgent[]
+  manager: IAgent
+}
+
+export class Orchestrator {
+  private dataFetcher?: IAgent
+  private researcherTeam: IAgent[]
+  private riskTeam: IAgent[]
+  private manager: IAgent
+
+  constructor(config: OrchestratorConfig) {
+    this.dataFetcher = config.dataFetcher
+    this.researcherTeam = config.researcherTeam
+    this.riskTeam = config.riskTeam
+    this.manager = config.manager
+  }
+
+  async run(ticker: string, market: Market): Promise<TradingReport> {
+    let report: TradingReport = {
+      ticker,
+      market,
+      timestamp: new Date(),
+      rawData: [],
+      researchFindings: [],
+    }
+
+    // Stage 1: Data fetching
+    if (this.dataFetcher) {
+      report = await this.dataFetcher.run(report)
+    }
+
+    // Stage 2: Researcher team — parallel
+    // Each agent gets a copy of the current report so they don't conflict.
+    // Findings from all researchers are merged back into the main report.
+    if (this.researcherTeam.length > 0) {
+      const researcherResults = await Promise.all(
+        this.researcherTeam.map((agent) => agent.run({ ...report }))
+      )
+      report = {
+        ...report,
+        researchFindings: [
+          ...report.researchFindings,
+          ...researcherResults.flatMap((r) => r.researchFindings),
+        ],
+      }
+    }
+
+    // Stage 3: Risk team — sequential
+    // RiskManager depends on riskAssessment set by RiskAnalyst, so they must run in order.
+    for (const agent of this.riskTeam) {
+      report = await agent.run(report)
+    }
+
+    // Stage 4: Manager — reads full report, outputs final decision
+    report = await this.manager.run(report)
+
+    return report
+  }
+}
