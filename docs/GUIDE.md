@@ -84,10 +84,10 @@ The key design principle: **every external dependency is behind an interface**.
 
 ```
 ILLMProvider  → swap OpenAI for Gemini for any agent, just change config
-IDataSource   → swap yfinance for Polygon, or add a new source (Plan 2)
-IVectorStore  → swap Qdrant for Pinecone without touching any agent code (Plan 2)
+IDataSource   → swap yfinance for Polygon, or add a new source
+IVectorStore  → swap Qdrant for Pinecone without touching any agent code
 IAgent        → every agent has the same contract: takes TradingReport, returns TradingReport
-IEvaluator    → every evaluator scores a TradingReport the same way (Plan 3)
+IEvaluator    → every evaluator scores a TradingReport the same way
 ```
 
 This means you can test any layer in isolation by passing a fake implementation of its dependencies.
@@ -154,7 +154,7 @@ Researcher Team runs in parallel:
   NewsAnalyst      → report.researchFindings.push({ stance: 'bull', sentiment: 'positive', ... })
   FundamentalsAnalyst → report.researchFindings.push({ fundamentalScore: 78, keyMetrics: { PE: 28 } })
 
-Risk Team runs in parallel:
+Risk Team runs sequentially (RiskManager depends on RiskAnalyst output):
   RiskAnalyst  → report.riskAssessment = { riskLevel: 'medium', metrics: { VaR: 0.03, volatility: 0.22, ... } }
   RiskManager  → report.riskAssessment.maxPositionSize = 0.05, stopLoss = 180.00
 
@@ -189,24 +189,128 @@ npm run test:watch
 
 ---
 
-## What comes next
+## What was built (Plan 2 — Data & RAG)
 
-### Plan 2 — Data & RAG
+### 1. Data source layer (`src/data/`)
 
-- `IDataSource` interface + adapters for US markets (yfinance, Polygon, NewsAPI, Finnhub, SEC EDGAR)
-- CN/HK adapters (Tushare HTTP API, AkShare HTTP API)
-- `IVectorStore` interface + `QdrantVectorStore`
-- `Embedder` — chunks text and calls OpenAI embeddings
-- `DataFetcher` agent — orchestrates fetch → chunk → embed → store
+`IDataSource` is the interface every data adapter implements:
 
-### Plan 3 — Agents & Evaluation
+```ts
+interface IDataSource {
+  readonly name: string
+  fetch(query: DataQuery): Promise<DataResult>
+}
+```
 
-- `IAgent` base interface
-- All 7 agents (BullResearcher, BearResearcher, NewsAnalyst, FundamentalsAnalyst, RiskAnalyst, RiskManager, Manager)
-- `Orchestrator` — runs Researcher Team in parallel, then Risk Team in parallel, then Manager
-- `ReasoningEvaluator` — LLM-as-judge for agent output quality
-- `AccuracyEvaluator` — compares prediction to actual price movement after N days
-- `BacktestEvaluator` — full portfolio simulation over historical date range
+Adapters built:
+
+| File | Market | Data |
+|------|--------|------|
+| `YFinanceSource.ts` | US | OHLCV, fundamentals via yfinance HTTP |
+| `PolygonSource.ts` | US | OHLCV, news via Polygon.io REST API |
+| `NewsAPISource.ts` | US | News articles via NewsAPI |
+| `FinnhubSource.ts` | US | Fundamentals, technicals via Finnhub |
+| `SECEdgarSource.ts` | US | Filings via SEC EDGAR full-text search |
+| `TushareSource.ts` | CN | A-shares OHLCV via Tushare HTTP API |
+| `AkShareSource.ts` | CN/HK | A-shares + HK equities via AkShare |
+
+### 2. RAG layer (`src/rag/`)
+
+- **`IVectorStore`** — interface for upsert / search / delete
+- **`QdrantVectorStore`** — implementation backed by Qdrant (`@qdrant/js-client-rest`)
+- **`Embedder`** — wraps OpenAI-compatible embeddings, exposes `embed()` and `embedBatch()`
+- **`chunker.ts`** — splits long text into overlapping chunks with configurable size and overlap
+
+### 3. DataFetcher agent (`src/agents/data/DataFetcher.ts`)
+
+The first stage of the pipeline. Given a `TradingReport` with ticker + market:
+
+1. Fans out to all configured `IDataSource` adapters × 4 data types in parallel
+2. Chunks each result, embeds it, and upserts into the vector store (if configured)
+3. Writes raw `DataResult[]` to `report.rawData`
+
+---
+
+## What was built (Plan 3 — Agents & Evaluation)
+
+### 1. parseJson utility (`src/utils/parseJson.ts`)
+
+LLMs often wrap JSON in markdown code fences. `parseJson<T>(text)` strips any ` ```json ` fence before calling `JSON.parse`, so all agents share one safe entry point for parsing LLM responses.
+
+### 2. BaseResearcher (`src/agents/researcher/BaseResearcher.ts`)
+
+Abstract base class (Template Method pattern) for all four researcher agents. Subclasses only implement two hooks:
+
+```ts
+protected abstract buildQuery(report: TradingReport): string
+protected abstract buildSystemPrompt(report: TradingReport, context: string): string
+```
+
+`BaseResearcher.run()` handles:
+- RAG retrieval (embeds the query, searches the vector store for relevant context)
+- Building the full prompt + context
+- Calling the LLM
+- Parsing and validating the JSON response (stance enum check, confidence clamped to `[0,1]`)
+- Falling back to `{ stance: 'neutral', confidence: 0 }` on bad LLM output
+
+Constructor guard: throws if exactly one of `vectorStore`/`embedder` is provided (partial RAG config is always a bug).
+
+### 3. Researcher agents
+
+| Agent | File | Focus |
+|-------|------|-------|
+| `BullResearcher` | `researcher/BullResearcher.ts` | Finds BUY evidence |
+| `BearResearcher` | `researcher/BearResearcher.ts` | Finds SELL evidence |
+| `NewsAnalyst` | `researcher/NewsAnalyst.ts` | News sentiment, adds `sentiment` field to Finding |
+| `FundamentalsAnalyst` | `researcher/FundamentalsAnalyst.ts` | Company health, adds `fundamentalScore` + `keyMetrics` |
+
+### 4. Risk agents
+
+- **`RiskAnalyst`** (`src/agents/risk/RiskAnalyst.ts`) — computes `riskLevel`, VaR, volatility, beta, maxDrawdown from OHLCV + research findings. Sets `report.riskAssessment`.
+- **`RiskManager`** (`src/agents/risk/RiskManager.ts`) — reads `riskAssessment` and adds `maxPositionSize`, `stopLoss`, `takeProfit`. Returns early without an LLM call if no `riskAssessment` exists.
+
+### 5. Manager (`src/agents/manager/Manager.ts`)
+
+Reads the full report — all research findings and risk assessment — and produces the final `Decision`:
+
+```ts
+{ action: 'BUY' | 'SELL' | 'HOLD', confidence: number, reasoning: string, suggestedPositionSize?: number }
+```
+
+Fallback on bad LLM output: `{ action: 'HOLD', confidence: 0, reasoning: 'Manager was unable to parse LLM response' }`.
+
+### 6. Orchestrator (`src/orchestrator/Orchestrator.ts`)
+
+Wires the full pipeline:
+
+```
+Stage 1: DataFetcher (optional, skipped if not configured)
+Stage 2: Researcher team — Promise.all (each agent gets a { ...report } copy; findings merged after)
+Stage 3: Risk team — sequential for...of (RiskManager depends on RiskAnalyst's output)
+Stage 4: Manager
+```
+
+### 7. Evaluators (`src/evaluation/`)
+
+| Evaluator | What it measures |
+|-----------|-----------------|
+| `ReasoningEvaluator` | LLM-as-judge: scores `logicalConsistency`, `evidenceQuality`, `confidenceCalibration` (each 0–1) |
+| `AccuracyEvaluator` | Directional accuracy (BUY+up=correct, SELL+down=correct, HOLD=0.5) + confidence calibration |
+| `BacktestEvaluator` | Aggregates `AccuracyEvaluator` over a list of historical entries; computes win rate, Sharpe ratio (sample variance), max drawdown |
+
+All three implement `IEvaluator`:
+
+```ts
+interface IEvaluator {
+  evaluate(report: TradingReport): Promise<EvaluationResult>
+}
+
+type EvaluationResult = {
+  score: number
+  breakdown: Record<string, number>
+  notes: string
+}
+```
 
 ---
 
@@ -215,21 +319,25 @@ npm run test:watch
 ```
 traderagent/
 ├── src/
-│   ├── llm/                  LLM adapter layer (done)
-│   ├── agents/base/          Shared domain types (done)
-│   ├── config/               Agent-to-LLM mapping (done)
-│   ├── data/                 Data source adapters (Plan 2)
-│   ├── rag/                  Vector store + embedder (Plan 2)
-│   ├── agents/               Agent implementations (Plan 3)
-│   ├── orchestrator/         Parallel team execution (Plan 3)
-│   └── evaluation/           Evaluators (Plan 3)
-├── tests/
-│   └── llm/                  LLM adapter tests (done)
+│   ├── llm/                  LLM adapter layer (ILLMProvider, 5 adapters, registry)
+│   ├── agents/
+│   │   ├── base/             Shared domain types (TradingReport, Finding, Decision, …)
+│   │   ├── data/             DataFetcher
+│   │   ├── researcher/       BaseResearcher, Bull, Bear, News, Fundamentals
+│   │   ├── risk/             RiskAnalyst, RiskManager
+│   │   └── manager/          Manager
+│   ├── data/                 IDataSource + US/CN/HK adapters
+│   ├── rag/                  IVectorStore, QdrantVectorStore, Embedder, chunker
+│   ├── orchestrator/         Orchestrator
+│   ├── evaluation/           IEvaluator, Reasoning, Accuracy, Backtest evaluators
+│   ├── utils/                parseJson
+│   └── config/               Agent-to-LLM mapping
+├── tests/                    Mirrors src/ structure, 240 tests total
 └── docs/
     ├── GUIDE.md              This file
     └── superpowers/
         ├── specs/            Design documents
-        └── plans/            Implementation plans
+        └── plans/            Implementation plans (one per plan)
 ```
 
 ---

@@ -10,7 +10,7 @@ You give it a ticker and a market. A team of AI agents goes to work:
 
 1. **DataFetcher** pulls market data, news, fundamentals, and technical indicators — embeds everything into a vector store
 2. **Researcher Team** (runs in parallel) — a Bull agent finds reasons to buy, a Bear agent finds reasons to sell, a News agent reads sentiment, a Fundamentals agent checks company health
-3. **Risk Team** (runs in parallel) — evaluates volatility, VaR, drawdown, and sets position sizing and stop-loss levels
+3. **Risk Team** (runs sequentially) — RiskAnalyst evaluates volatility, VaR, drawdown; RiskManager then sets position sizing and stop-loss levels based on that assessment
 4. **Manager** reads every agent's findings and makes the final call
 
 Every agent can use a **different LLM** (OpenAI, Anthropic, Gemini, Ollama, DeepSeek). Every data source and vector store is behind an interface, so you can swap them out without touching agent logic.
@@ -57,8 +57,8 @@ Agents communicate through a **shared `TradingReport`** (blackboard pattern). Ea
 | Plan | What | Status |
 |------|------|--------|
 | Plan 1 — Foundation | TypeScript setup, all domain types, LLM adapters (5 providers), LLMRegistry, config | ✅ Done |
-| Plan 2 — Data & RAG | Data source adapters (US + CN), Qdrant vector store, embedder, DataFetcher | 🔜 Next |
-| Plan 3 — Agents & Evaluation | All 7 agents, Orchestrator, 3 evaluators | 🔜 Upcoming |
+| Plan 2 — Data & RAG | Data source adapters (US + CN), Qdrant vector store, embedder, DataFetcher | ✅ Done |
+| Plan 3 — Agents & Evaluation | All 7 agents, Orchestrator, 3 evaluators | ✅ Done |
 
 ---
 
@@ -123,20 +123,18 @@ export const agentConfig = {
 
 ```
 src/
-├── llm/              LLM provider layer
-│   ├── ILLMProvider.ts
-│   ├── types.ts      Message, LLMOptions
-│   ├── openai.ts
-│   ├── anthropic.ts
-│   ├── gemini.ts
-│   ├── ollama.ts
-│   ├── deepseek.ts
-│   └── registry.ts   resolves providers by agent name
-├── agents/base/
-│   └── types.ts      TradingReport, Finding, Decision, etc.
-├── config/
-│   └── config.ts     agent → LLM mapping
-└── (data/, rag/, agents/, orchestrator/, evaluation/ — Plan 2 & 3)
+├── llm/                  LLM provider layer (ILLMProvider, 5 adapters, registry)
+├── agents/
+│   ├── base/             Shared domain types (TradingReport, Finding, Decision, …)
+│   ├── researcher/       BaseResearcher, Bull, Bear, News, Fundamentals
+│   ├── risk/             RiskAnalyst, RiskManager
+│   └── manager/          Manager — final BUY/SELL/HOLD decision
+├── data/                 IDataSource interface + US/CN/HK adapters
+├── rag/                  IVectorStore, QdrantVectorStore, Embedder, chunker
+├── orchestrator/         Orchestrator — wires all agents into the pipeline
+├── evaluation/           IEvaluator, ReasoningEvaluator, AccuracyEvaluator, BacktestEvaluator
+├── utils/                parseJson — strips markdown fences before JSON.parse
+└── config/               Agent-to-LLM mapping
 ```
 
 ---
@@ -144,7 +142,10 @@ src/
 ## Docs
 
 - [Design spec](docs/superpowers/specs/2026-03-25-traderagent-design.md) — full architecture decisions
-- [Plan 1 — Foundation](docs/superpowers/plans/2026-03-25-foundation.md) — implementation plan (completed)
+- [Developer guide](docs/GUIDE.md) — how things work, how to extend
+- [Plan 1 — Foundation](docs/superpowers/plans/2026-03-25-foundation.md)
+- [Plan 2 — Data & RAG](docs/superpowers/plans/2026-03-25-data-and-rag.md)
+- [Plan 3 — Agents & Evaluation](docs/superpowers/plans/2026-03-25-agents-and-evaluation.md)
 
 ---
 
@@ -153,5 +154,5 @@ src/
 - **Language:** TypeScript 5.4, ESM
 - **Testing:** Vitest
 - **LLM SDKs:** openai, @anthropic-ai/sdk, @google/generative-ai, ollama
-- **Vector store:** Qdrant (Plan 2)
-- **Market data:** yfinance, Polygon.io, Tushare, AkShare (Plan 2)
+- **Vector store:** Qdrant (`@qdrant/js-client-rest`)
+- **Market data:** yfinance, Polygon.io, Tushare, AkShare
