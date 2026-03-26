@@ -26,6 +26,11 @@ export abstract class BaseResearcher implements IAgent {
     this.vectorStore = config.vectorStore
     this.embedder = config.embedder
     this.topK = config.topK ?? 5
+    if ((config.vectorStore == null) !== (config.embedder == null)) {
+      throw new Error(
+        `${this.constructor.name}: vectorStore and embedder must both be provided or both omitted`
+      )
+    }
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
@@ -55,11 +60,18 @@ export abstract class BaseResearcher implements IAgent {
   protected parseFinding(response: string): Finding {
     try {
       const parsed = parseJson<Partial<Finding>>(response)
+      const rawStance = parsed.stance
+      const validStances = ['bull', 'bear', 'neutral'] as const
+      const stance: Finding['stance'] = validStances.includes(rawStance as Finding['stance'])
+        ? (rawStance as Finding['stance'])
+        : 'neutral'
+      const rawConfidence = parsed.confidence ?? 0.5
+      const confidence = Math.min(1, Math.max(0, rawConfidence))
       return {
         agentName: this.name,
-        stance: parsed.stance ?? 'neutral',
+        stance,
         evidence: parsed.evidence ?? [],
-        confidence: parsed.confidence ?? 0.5,
+        confidence,
         sentiment: parsed.sentiment,
         fundamentalScore: parsed.fundamentalScore,
         keyMetrics: parsed.keyMetrics,

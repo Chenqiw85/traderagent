@@ -80,4 +80,25 @@ describe('BullResearcher', () => {
     expect(llm.chat).toHaveBeenCalledOnce()
     expect(result.researchFindings).toHaveLength(1)
   })
+
+  it('clamps out-of-range confidence to [0, 1]', async () => {
+    const llm = mockLLM('{"stance":"bull","evidence":["test"],"confidence":3.7}')
+    const agent = new BullResearcher({ llm })
+    const result = await agent.run(emptyReport())
+    expect(result.researchFindings[0].confidence).toBe(1)
+  })
+
+  it('defaults unrecognized stance to neutral', async () => {
+    const llm = mockLLM('{"stance":"super_bullish","evidence":["test"],"confidence":0.5}')
+    const agent = new BullResearcher({ llm })
+    const result = await agent.run(emptyReport())
+    expect(result.researchFindings[0].stance).toBe('neutral')
+  })
+
+  it('throws when only vectorStore is provided without embedder', () => {
+    const vs = mockVectorStore()
+    expect(() => new BullResearcher({ llm: mockLLM('{}'), vectorStore: vs })).toThrow(
+      'vectorStore and embedder must both be provided or both omitted'
+    )
+  })
 })
