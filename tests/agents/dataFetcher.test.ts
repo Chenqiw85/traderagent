@@ -9,13 +9,15 @@ import type { TradingReport } from '../../src/agents/base/types.js'
 function createMockDataSource(name: string): IDataSource {
   return {
     name,
-    fetch: vi.fn().mockResolvedValue({
-      ticker: 'AAPL',
-      market: 'US' as const,
-      type: 'ohlcv' as const,
-      data: [{ close: 150 }],
-      fetchedAt: new Date('2024-01-01'),
-    }),
+    fetch: vi.fn().mockImplementation((query) =>
+      Promise.resolve({
+        ticker: query.ticker,
+        market: query.market,
+        type: query.type,
+        data: [{ close: 150 }],
+        fetchedAt: new Date('2024-01-01'),
+      }),
+    ),
   }
 }
 

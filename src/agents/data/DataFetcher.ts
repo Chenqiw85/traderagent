@@ -2,6 +2,7 @@
 
 import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, DataQuery, DataResult, DataType, Market, TradingReport } from '../base/types.js'
+import { DATA_CRITICALITY } from '../base/types.js'
 import type { IDataSource } from '../../data/IDataSource.js'
 import type { IVectorStore, Document } from '../../rag/IVectorStore.js'
 import type { Embedder } from '../../rag/embedder.js'
@@ -60,6 +61,18 @@ export class DataFetcher implements IAgent {
 
     const results = await Promise.all(fetchPromises)
     const validResults = results.filter((r): r is DataResult => r !== null)
+
+    // 1b. Enforce data criticality — abort if any critical type has zero results
+    const fetchedTypes = new Set(validResults.map((r) => r.type))
+    const missingCritical = dataTypes.filter(
+      (t) => DATA_CRITICALITY[t] === 'critical' && !fetchedTypes.has(t),
+    )
+    if (missingCritical.length > 0) {
+      throw new Error(
+        `ABORT: Failed to fetch critical data types for ${ticker}: ${missingCritical.join(', ')}. ` +
+        `Pipeline cannot continue without this data.`,
+      )
+    }
 
     // 2. Chunk + embed + store (if vector store and embedder are configured)
     if (this.vectorStore && this.embedder) {
