@@ -11,16 +11,16 @@ beforeEach(() => {
 })
 
 describe('LLMRegistry', () => {
-  it('resolves openai provider for manager', () => {
+  it('resolves deepseek provider for manager', () => {
     const registry = new LLMRegistry(agentConfig)
     const provider = registry.get('manager')
-    expect(provider.name).toBe('openai')
+    expect(provider.name).toBe('deepseek')
   })
 
-  it('resolves anthropic provider for bearResearcher', () => {
+  it('resolves deepseek provider for bearResearcher', () => {
     const registry = new LLMRegistry(agentConfig)
     const provider = registry.get('bearResearcher')
-    expect(provider.name).toBe('anthropic')
+    expect(provider.name).toBe('deepseek')
   })
 
   it('throws for unknown agent', () => {
