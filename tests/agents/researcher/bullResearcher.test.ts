@@ -33,7 +33,10 @@ function emptyReport(): TradingReport {
     ticker: 'AAPL',
     market: 'US',
     timestamp: new Date(),
-    rawData: [],
+    rawData: [
+      { type: 'ohlcv', ticker: 'AAPL', market: 'US', data: {}, fetchedAt: new Date() },
+      { type: 'fundamentals', ticker: 'AAPL', market: 'US', data: {}, fetchedAt: new Date() },
+    ],
     researchFindings: [],
   }
 }

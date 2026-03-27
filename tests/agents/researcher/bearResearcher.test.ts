@@ -12,7 +12,16 @@ function mockLLM(response: string): ILLMProvider {
 }
 
 function emptyReport(): TradingReport {
-  return { ticker: 'AAPL', market: 'US', timestamp: new Date(), rawData: [], researchFindings: [] }
+  return {
+    ticker: 'AAPL',
+    market: 'US',
+    timestamp: new Date(),
+    rawData: [
+      { type: 'ohlcv', ticker: 'AAPL', market: 'US', data: {}, fetchedAt: new Date() },
+      { type: 'fundamentals', ticker: 'AAPL', market: 'US', data: {}, fetchedAt: new Date() },
+    ],
+    researchFindings: [],
+  }
 }
 
 describe('BearResearcher', () => {

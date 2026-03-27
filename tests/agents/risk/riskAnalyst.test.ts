@@ -20,6 +20,14 @@ function reportWithData(): TradingReport {
     researchFindings: [
       { agentName: 'bullResearcher', stance: 'bull', evidence: ['Strong earnings'], confidence: 0.8 },
     ],
+    computedIndicators: {
+      trend: { sma50: 150, sma200: 145, ema12: 152, ema26: 148, macd: { line: 4, signal: 3, histogram: 1 } },
+      momentum: { rsi: 55, stochastic: { k: 60, d: 58 } },
+      volatility: { bollingerUpper: 160, bollingerMiddle: 150, bollingerLower: 140, atr: 3.5, historicalVolatility: 0.25 },
+      volume: { obv: 5000000 },
+      risk: { beta: 1.1, maxDrawdown: 0.15, var95: 0.03 },
+      fundamentals: { pe: 25, pb: 5, dividendYield: 0.015, eps: 6.5 },
+    },
   }
 }
 
@@ -31,21 +39,19 @@ describe('RiskAnalyst', () => {
   })
 
   it('sets riskAssessment with metrics on the report', async () => {
-    const llm = mockLLM(
-      '{"riskLevel":"medium","metrics":{"VaR":0.03,"volatility":0.22,"beta":1.1,"maxDrawdown":0.15}}'
-    )
+    const llm = mockLLM('{"riskLevel":"medium"}')
     const agent = new RiskAnalyst({ llm })
     const result = await agent.run(reportWithData())
     expect(result.riskAssessment).toBeDefined()
     expect(result.riskAssessment?.riskLevel).toBe('medium')
     expect(result.riskAssessment?.metrics.VaR).toBe(0.03)
-    expect(result.riskAssessment?.metrics.volatility).toBe(0.22)
+    expect(result.riskAssessment?.metrics.volatility).toBe(0.25)
+    expect(result.riskAssessment?.metrics.beta).toBe(1.1)
+    expect(result.riskAssessment?.metrics.maxDrawdown).toBe(0.15)
   })
 
   it('calls LLM with ticker in context', async () => {
-    const llm = mockLLM(
-      '{"riskLevel":"low","metrics":{"VaR":0.01,"volatility":0.1,"beta":0.8,"maxDrawdown":0.05}}'
-    )
+    const llm = mockLLM('{"riskLevel":"low"}')
     const agent = new RiskAnalyst({ llm })
     await agent.run(reportWithData())
     expect(llm.chat).toHaveBeenCalledOnce()
@@ -53,10 +59,12 @@ describe('RiskAnalyst', () => {
     expect(messages[0].content).toContain('AAPL')
   })
 
-  it('falls back to default values on malformed LLM response', async () => {
+  it('falls back to default riskLevel on malformed LLM response', async () => {
     const agent = new RiskAnalyst({ llm: mockLLM('not json') })
     const result = await agent.run(reportWithData())
     expect(result.riskAssessment?.riskLevel).toBe('medium')
-    expect(result.riskAssessment?.metrics.VaR).toBe(0)
+    // metrics still come from computedIndicators, not LLM
+    expect(result.riskAssessment?.metrics.VaR).toBe(0.03)
+    expect(result.riskAssessment?.metrics.volatility).toBe(0.25)
   })
 })
