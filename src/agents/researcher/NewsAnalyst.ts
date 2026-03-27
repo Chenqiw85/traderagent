@@ -9,17 +9,25 @@ export class NewsAnalyst extends BaseResearcher {
     return `recent news articles and market sentiment for ${report.ticker}`
   }
 
-  protected buildSystemPrompt(report: TradingReport, context: string, rawDataContext: string): string {
-    return `You are a financial news and sentiment analyst. Analyze market sentiment for ${report.ticker}.
-IMPORTANT: Base ALL evidence on the actual data provided below (analyst ratings, target prices, sector/industry info). Do not fabricate news headlines or events.
-${rawDataContext ? `\nData fetched from Yahoo Finance:\n${rawDataContext}\n` : '\nWARNING: No market data available. State this clearly in your evidence and set confidence to 0.\n'}
-${context ? `\nAdditional context:\n${context}\n` : ''}
-Respond with ONLY a JSON object matching this schema:
+  protected buildSystemPrompt(_report: TradingReport, context: string, rawDataContext: string, indicators: string): string {
+    return `You are a financial news and sentiment analyst for ${_report.ticker}.
+
+${indicators}
+
+${context ? `=== RAG CONTEXT (historical patterns) ===\n${context}\n` : ''}
+${rawDataContext ? `=== RAW DATA (for reference) ===\n${rawDataContext}\n` : ''}
+RULES:
+- Base ALL evidence on the data provided (analyst ratings, target prices, sector info)
+- Do not fabricate news headlines or events
+- If no news data is available, clearly state that and lower confidence
+- Confidence must reflect data quality
+
+Respond with ONLY a JSON object:
 {
   "stance": "bull" | "bear" | "neutral",
-  "sentiment": "<description of sentiment derived from analyst ratings and available data>",
-  "evidence": ["<point citing specific data such as analyst rating or target price>", "..."],
-  "confidence": <number 0-1, use 0 if no data was provided>
+  "sentiment": "<description derived from available data>",
+  "evidence": ["<point citing specific data>", "..."],
+  "confidence": <number 0-1>
 }`
   }
 }

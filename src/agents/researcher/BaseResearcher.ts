@@ -48,8 +48,9 @@ export abstract class BaseResearcher implements IAgent {
     }
 
     const context = await this.retrieveContext(report)
+    const indicators = this.formatIndicators(report)
     const rawDataContext = this.formatRawData(report)
-    const systemPrompt = this.buildSystemPrompt(report, context, rawDataContext)
+    const systemPrompt = this.buildSystemPrompt(report, context, rawDataContext, indicators)
     const response = await this.llm.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `Analyze ${report.ticker} on the ${report.market} market. Base your analysis ONLY on the data provided above. Do not invent numbers. Respond with JSON only.` },
@@ -59,6 +60,26 @@ export abstract class BaseResearcher implements IAgent {
       ...report,
       researchFindings: [...report.researchFindings, finding],
     }
+  }
+
+  /** Format computed indicators into a human-readable block for the LLM */
+  protected formatIndicators(report: TradingReport): string {
+    const ci = report.computedIndicators
+    if (!ci) return ''
+
+    const lines: string[] = ['=== COMPUTED INDICATORS (calculated from real market data) ===']
+
+    const fmt = (v: number | null, decimals = 2) =>
+      v == null || isNaN(v) ? 'N/A' : v.toFixed(decimals)
+
+    lines.push(`Trend:       SMA50=$${fmt(ci.trend.sma50)}  SMA200=$${fmt(ci.trend.sma200)}  MACD=${fmt(ci.trend.macd.line)} (signal=${fmt(ci.trend.macd.signal)}, hist=${fmt(ci.trend.macd.histogram)})`)
+    lines.push(`Momentum:    RSI=${fmt(ci.momentum.rsi, 1)}  Stochastic %K=${fmt(ci.momentum.stochastic.k, 1)} %D=${fmt(ci.momentum.stochastic.d, 1)}`)
+    lines.push(`Volatility:  Bollinger [$${fmt(ci.volatility.bollingerLower)} / $${fmt(ci.volatility.bollingerMiddle)} / $${fmt(ci.volatility.bollingerUpper)}]  ATR=$${fmt(ci.volatility.atr)}  HistVol=${fmt(ci.volatility.historicalVolatility * 100, 1)}%`)
+    lines.push(`Volume:      OBV=${ci.volume.obv > 0 ? '+' : ''}${(ci.volume.obv / 1e6).toFixed(1)}M`)
+    lines.push(`Risk:        Beta=${fmt(ci.risk.beta)}  MaxDrawdown=-${fmt(ci.risk.maxDrawdown * 100, 1)}%  VaR95=-${fmt(ci.risk.var95 * 100, 2)}%`)
+    lines.push(`Fundamentals: P/E=${fmt(ci.fundamentals.pe)}  P/B=${fmt(ci.fundamentals.pb)}  DivYield=${ci.fundamentals.dividendYield != null ? fmt(ci.fundamentals.dividendYield * 100, 2) + '%' : 'N/A'}  EPS=$${fmt(ci.fundamentals.eps)}`)
+
+    return lines.join('\n')
   }
 
   /** Serialize rawData entries from the report into a readable string for the LLM */
@@ -117,5 +138,5 @@ export abstract class BaseResearcher implements IAgent {
   }
 
   protected abstract buildQuery(report: TradingReport): string
-  protected abstract buildSystemPrompt(report: TradingReport, context: string, rawDataContext: string): string
+  protected abstract buildSystemPrompt(report: TradingReport, context: string, rawDataContext: string, indicators: string): string
 }
