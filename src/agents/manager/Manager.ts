@@ -19,6 +19,10 @@ export class Manager implements IAgent {
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
+    if (report.researchFindings.length === 0) {
+      throw new Error('Manager: cannot make a decision — no research findings available')
+    }
+
     const context = this.buildContext(report)
     const response = await this.llm.chat([
       {
