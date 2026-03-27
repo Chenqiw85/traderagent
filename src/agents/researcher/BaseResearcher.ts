@@ -1,5 +1,5 @@
 import type { IAgent } from '../base/IAgent.js'
-import type { AgentRole, Finding, TradingReport } from '../base/types.js'
+import type { AgentRole, DataType, Finding, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { IVectorStore } from '../../rag/IVectorStore.js'
 import type { Embedder } from '../../rag/embedder.js'
@@ -14,6 +14,7 @@ export type ResearcherConfig = {
 
 export abstract class BaseResearcher implements IAgent {
   abstract readonly name: string
+  abstract readonly requiredData: DataType[]
   readonly role: AgentRole = 'researcher'
 
   protected llm: ILLMProvider
@@ -34,17 +35,46 @@ export abstract class BaseResearcher implements IAgent {
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
+    // Validate required data is present
+    const missing = this.requiredData.filter(
+      (type) =>
+        !report.rawData.some((d) => d.type === type) &&
+        !(type === 'technicals' && report.computedIndicators),
+    )
+    if (missing.length > 0) {
+      throw new Error(
+        `${this.name}: cannot analyze — missing required data: ${missing.join(', ')}`,
+      )
+    }
+
     const context = await this.retrieveContext(report)
-    const systemPrompt = this.buildSystemPrompt(report, context)
+    const rawDataContext = this.formatRawData(report)
+    const systemPrompt = this.buildSystemPrompt(report, context, rawDataContext)
     const response = await this.llm.chat([
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: `Analyze ${report.ticker} on the ${report.market} market. Respond with JSON only.` },
+      { role: 'user', content: `Analyze ${report.ticker} on the ${report.market} market. Base your analysis ONLY on the data provided above. Do not invent numbers. Respond with JSON only.` },
     ])
     const finding = this.parseFinding(response)
     return {
       ...report,
       researchFindings: [...report.researchFindings, finding],
     }
+  }
+
+  /** Serialize rawData entries from the report into a readable string for the LLM */
+  protected formatRawData(report: TradingReport): string {
+    if (report.rawData.length === 0) return ''
+    return report.rawData
+      .map((r) => {
+        let payload: string
+        try {
+          payload = JSON.stringify(r.data, null, 2)
+        } catch {
+          payload = String(r.data)
+        }
+        return `--- ${r.type.toUpperCase()} (${r.ticker} / ${r.market}, fetched ${r.fetchedAt.toISOString()}) ---\n${payload}`
+      })
+      .join('\n\n')
   }
 
   protected async retrieveContext(report: TradingReport): Promise<string> {
@@ -87,5 +117,5 @@ export abstract class BaseResearcher implements IAgent {
   }
 
   protected abstract buildQuery(report: TradingReport): string
-  protected abstract buildSystemPrompt(report: TradingReport, context: string): string
+  protected abstract buildSystemPrompt(report: TradingReport, context: string, rawDataContext: string): string
 }
