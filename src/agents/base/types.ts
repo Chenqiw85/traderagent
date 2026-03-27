@@ -6,6 +6,48 @@ export type Market = 'US' | 'CN' | 'HK'
 
 export type DataType = 'ohlcv' | 'news' | 'fundamentals' | 'technicals'
 
+export const DATA_CRITICALITY: Record<DataType, 'critical' | 'optional'> = {
+  ohlcv: 'critical',
+  fundamentals: 'critical',
+  technicals: 'critical',
+  news: 'optional',
+}
+
+export type ComputedIndicators = {
+  trend: {
+    sma50: number
+    sma200: number
+    ema12: number
+    ema26: number
+    macd: { line: number; signal: number; histogram: number }
+  }
+  momentum: {
+    rsi: number
+    stochastic: { k: number; d: number }
+  }
+  volatility: {
+    bollingerUpper: number
+    bollingerMiddle: number
+    bollingerLower: number
+    atr: number
+    historicalVolatility: number
+  }
+  volume: {
+    obv: number
+  }
+  risk: {
+    beta: number
+    maxDrawdown: number
+    var95: number
+  }
+  fundamentals: {
+    pe: number | null
+    pb: number | null
+    dividendYield: number | null
+    eps: number | null
+  }
+}
+
 export type DataQuery = {
   ticker: string
   market: Market
@@ -60,6 +102,7 @@ export type TradingReport = {
   market: Market
   timestamp: Date
   rawData: DataResult[]
+  computedIndicators?: ComputedIndicators
   researchFindings: Finding[]
   riskAssessment?: RiskAssessment
   finalDecision?: Decision
