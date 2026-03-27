@@ -10,13 +10,15 @@ export type AgentLLMConfig = {
 export type AgentConfigMap = Record<string, AgentLLMConfig>
 
 export const agentConfig: AgentConfigMap = {
-  bullResearcher:      { llm: 'openai',    model: 'gpt-4o' },
-  bearResearcher:      { llm: 'anthropic', model: 'claude-sonnet-4-6' },
-  newsAnalyst:         { llm: 'gemini',    model: 'gemini-2.0-flash' },
-  fundamentalsAnalyst: { llm: 'deepseek',  model: 'deepseek-chat' },
-  riskAnalyst:         { llm: 'gemini',    model: 'gemini-2.0-flash' },
-  riskManager:         { llm: 'openai',    model: 'gpt-4o-mini' },
-  manager:             { llm: 'openai',    model: 'o3-mini' },
+  // Research team — deepseek-chat: fast, cost-effective for evidence gathering
+  bullResearcher:      { llm: 'deepseek', model: 'deepseek-chat' },
+  bearResearcher:      { llm: 'deepseek', model: 'deepseek-chat' },
+  newsAnalyst:         { llm: 'deepseek', model: 'deepseek-chat' },
+  fundamentalsAnalyst: { llm: 'deepseek', model: 'deepseek-chat' },
+  // Risk + decision team — deepseek-reasoner (R1): deep chain-of-thought for critical calls
+  riskAnalyst:         { llm: 'deepseek', model: 'deepseek-reasoner' },
+  riskManager:         { llm: 'deepseek', model: 'deepseek-reasoner' },
+  manager:             { llm: 'deepseek', model: 'deepseek-reasoner' },
 }
 
 export const dataSourceConfig = {
@@ -24,3 +26,11 @@ export const dataSourceConfig = {
   CN: ['tushare', 'akshare'],
   HK: ['akshare'],
 } as const
+
+export type RAGMode = 'qdrant' | 'memory' | 'disabled'
+
+export function detectRAGMode(): RAGMode {
+  if (process.env['OPENAI_API_KEY'] && process.env['QDRANT_URL']) return 'qdrant'
+  if (process.env['OLLAMA_HOST']) return 'memory'
+  return 'disabled'
+}

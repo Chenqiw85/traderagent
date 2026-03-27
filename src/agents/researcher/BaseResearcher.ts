@@ -2,13 +2,13 @@ import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, DataType, Finding, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { IVectorStore } from '../../rag/IVectorStore.js'
-import type { Embedder } from '../../rag/embedder.js'
+import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { parseJson } from '../../utils/parseJson.js'
 
 export type ResearcherConfig = {
   llm: ILLMProvider
   vectorStore?: IVectorStore
-  embedder?: Embedder
+  embedder?: IEmbedder
   topK?: number
 }
 
@@ -19,7 +19,7 @@ export abstract class BaseResearcher implements IAgent {
 
   protected llm: ILLMProvider
   protected vectorStore?: IVectorStore
-  protected embedder?: Embedder
+  protected embedder?: IEmbedder
   protected topK: number
 
   constructor(config: ResearcherConfig) {

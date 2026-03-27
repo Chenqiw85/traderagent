@@ -5,14 +5,14 @@ import type { AgentRole, DataQuery, DataResult, DataType, Market, TradingReport 
 import { DATA_CRITICALITY } from '../base/types.js'
 import type { IDataSource } from '../../data/IDataSource.js'
 import type { IVectorStore, Document } from '../../rag/IVectorStore.js'
-import type { Embedder } from '../../rag/embedder.js'
+import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { chunkText, type ChunkOptions } from '../../rag/chunker.js'
 import crypto from 'node:crypto'
 
 type DataFetcherConfig = {
   dataSources: IDataSource[]
   vectorStore?: IVectorStore
-  embedder?: Embedder
+  embedder?: IEmbedder
   chunkOptions?: ChunkOptions
 }
 
@@ -30,7 +30,7 @@ export class DataFetcher implements IAgent {
 
   private dataSources: IDataSource[]
   private vectorStore?: IVectorStore
-  private embedder?: Embedder
+  private embedder?: IEmbedder
   private chunkOptions: ChunkOptions
 
   constructor(config: DataFetcherConfig) {
