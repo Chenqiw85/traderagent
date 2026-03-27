@@ -3,6 +3,7 @@ import type { Market, TradingReport } from '../agents/base/types.js'
 
 type OrchestratorConfig = {
   dataFetcher?: IAgent
+  technicalAnalyzer?: IAgent
   researcherTeam: IAgent[]
   riskTeam: IAgent[]
   manager: IAgent
@@ -10,12 +11,14 @@ type OrchestratorConfig = {
 
 export class Orchestrator {
   private dataFetcher?: IAgent
+  private technicalAnalyzer?: IAgent
   private researcherTeam: IAgent[]
   private riskTeam: IAgent[]
   private manager: IAgent
 
   constructor(config: OrchestratorConfig) {
     this.dataFetcher = config.dataFetcher
+    this.technicalAnalyzer = config.technicalAnalyzer
     this.researcherTeam = config.researcherTeam
     this.riskTeam = config.riskTeam
     this.manager = config.manager
@@ -30,12 +33,17 @@ export class Orchestrator {
       researchFindings: [],
     }
 
-    // Stage 1: Data fetching
+    // Stage 1: Fetch data
     if (this.dataFetcher) {
       report = await this.dataFetcher.run(report)
     }
 
-    // Stage 2: Researcher team — parallel
+    // Stage 2: Compute technical indicators
+    if (this.technicalAnalyzer) {
+      report = await this.technicalAnalyzer.run(report)
+    }
+
+    // Stage 3: Researcher team — parallel
     // Each agent gets a copy of the current report so they don't conflict.
     // Findings from all researchers are merged back into the main report.
     if (this.researcherTeam.length > 0) {
@@ -51,13 +59,13 @@ export class Orchestrator {
       }
     }
 
-    // Stage 3: Risk team — sequential
+    // Stage 4: Risk team — sequential
     // RiskManager depends on riskAssessment set by RiskAnalyst, so they must run in order.
     for (const agent of this.riskTeam) {
       report = await agent.run(report)
     }
 
-    // Stage 4: Manager — reads full report, outputs final decision
+    // Stage 5: Manager — reads full report, outputs final decision
     report = await this.manager.run(report)
 
     return report
