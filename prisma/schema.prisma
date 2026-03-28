@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Watchlist {
+  id        Int      @id @default(autoincrement())
+  ticker    String   @unique
+  market    String   // US, CN, HK
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Ohlcv {
+  id       Int      @id @default(autoincrement())
+  ticker   String
+  market   String
+  date     DateTime
+  open     Float
+  high     Float
+  low      Float
+  close    Float
+  volume   BigInt
+  source   String
+  fetchedAt DateTime @default(now())
+
+  @@unique([ticker, date])
+  @@index([ticker])
+}
+
+model Fundamentals {
+  id       Int      @id @default(autoincrement())
+  ticker   String
+  market   String
+  data     Json
+  source   String
+  fetchedAt DateTime @default(now())
+
+  @@index([ticker])
+}
+
+model News {
+  id          Int      @id @default(autoincrement())
+  ticker      String
+  market      String
+  title       String
+  url         String   @unique
+  source      String
+  publishedAt DateTime
+  data        Json?
+  fetchedAt   DateTime @default(now())
+
+  @@index([ticker])
+}
+
+model Technicals {
+  id         Int      @id @default(autoincrement())
+  ticker     String
+  market     String
+  date       DateTime
+  indicators Json
+  computedAt DateTime @default(now())
+
+  @@unique([ticker, date])
+  @@index([ticker])
+}
+
+model FetchLog {
+  id       Int      @id @default(autoincrement())
+  ticker   String
+  market   String
+  dataType String
+  source   String
+  status   String   // success, failed
+  error    String?
+  duration Int      // milliseconds
+  fetchedAt DateTime @default(now())
+
+  @@index([ticker])
+  @@index([fetchedAt])
+}
