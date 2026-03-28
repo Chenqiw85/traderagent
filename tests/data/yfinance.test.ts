@@ -2,50 +2,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { YFinanceSource } from '../../src/data/yfinance.js'
 
-const { mockQuote, mockAutoc } = vi.hoisted(() => {
+const { mockChart, mockQuote, mockQuoteSummary, mockSearch } = vi.hoisted(() => {
+  const mockChart = vi.fn().mockResolvedValue({
+    quotes: [
+      { date: new Date('2024-01-02'), open: 100, high: 105, low: 99, close: 103, volume: 1000000 },
+      { date: new Date('2024-01-03'), open: 103, high: 107, low: 102, close: 106, volume: 1200000 },
+    ],
+    meta: { symbol: 'AAPL' },
+  })
   const mockQuote = vi.fn().mockResolvedValue({
     symbol: 'AAPL',
     regularMarketPrice: 150,
-    regularMarketOpen: 148,
-    regularMarketDayHigh: 152,
-    regularMarketDayLow: 147,
-    regularMarketVolume: 50000000,
-    regularMarketPreviousClose: 149,
-    regularMarketChange: 1,
-    regularMarketChangePercent: 0.67,
-    fiftyTwoWeekHigh: 180,
-    fiftyTwoWeekLow: 120,
-    fiftyDayAverage: 155,
-    twoHundredDayAverage: 145,
-    averageDailyVolume3Month: 60000000,
-    marketCap: 2400000000000,
-    trailingPE: 25,
-    forwardPE: 22,
-    priceToBook: 40,
-    epsTrailingTwelveMonths: 6.0,
-    epsForward: 6.8,
-    trailingAnnualDividendYield: 0.005,
-    earningsTimestamp: new Date('2024-07-25'),
-    targetMeanPrice: 200,
-    numberOfAnalystOpinions: 40,
-    averageAnalystRating: '2.0 - Buy',
-    enterpriseValue: 2500000000000,
-    priceToSalesTrailing12Months: 7.5,
     shortName: 'Apple Inc.',
-    longName: 'Apple Inc.',
     sector: 'Technology',
     industry: 'Consumer Electronics',
-    exchange: 'NMS',
-    quoteType: 'EQUITY',
+    averageAnalystRating: '2.0 - Buy',
+    targetMeanPrice: 200,
   })
-  const mockAutoc = vi.fn().mockResolvedValue({ Result: [{ symbol: 'AAPL', name: 'Apple Inc.' }] })
-  return { mockQuote, mockAutoc }
+  const mockQuoteSummary = vi.fn().mockResolvedValue({
+    financialData: { currentPrice: 150 },
+    defaultKeyStatistics: { trailingPE: 25 },
+  })
+  const mockSearch = vi.fn().mockResolvedValue({
+    news: [{ title: 'AAPL hits new high', link: 'https://example.com/news/1' }],
+  })
+  return { mockChart, mockQuote, mockQuoteSummary, mockSearch }
 })
 
 vi.mock('yahoo-finance2', () => ({
   default: vi.fn().mockImplementation(() => ({
+    chart: mockChart,
     quote: mockQuote,
-    autoc: mockAutoc,
+    quoteSummary: mockQuoteSummary,
+    search: mockSearch,
   })),
 }))
 
@@ -60,35 +49,36 @@ describe('YFinanceSource', () => {
     expect(source.name).toBe('yfinance')
   })
 
-  it('fetches OHLCV data', async () => {
+  it('fetches OHLCV data via chart()', async () => {
     const result = await source.fetch({ ticker: 'AAPL', market: 'US', type: 'ohlcv' })
     expect(result.ticker).toBe('AAPL')
-    expect(result.market).toBe('US')
     expect(result.type).toBe('ohlcv')
-    expect(result.data).toHaveProperty('price', 150)
-    expect(result.data).toHaveProperty('volume', 50000000)
+    expect(mockChart).toHaveBeenCalled()
+    expect(result.data).toHaveProperty('quotes')
     expect(result.fetchedAt).toBeInstanceOf(Date)
   })
 
-  it('fetches fundamentals data', async () => {
+  it('fetches fundamentals data via quoteSummary + quote', async () => {
     const result = await source.fetch({ ticker: 'AAPL', market: 'US', type: 'fundamentals' })
     expect(result.type).toBe('fundamentals')
-    expect(result.data).toHaveProperty('trailingPE', 25)
-    expect(result.data).toHaveProperty('marketCap', 2400000000000)
+    expect(mockQuoteSummary).toHaveBeenCalled()
+    expect(mockQuote).toHaveBeenCalled()
+    expect(result.data).toHaveProperty('quoteSummary')
+    expect(result.data).toHaveProperty('quote')
   })
 
-  it('fetches news data', async () => {
+  it('fetches news data via search + quote', async () => {
     const result = await source.fetch({ ticker: 'AAPL', market: 'US', type: 'news' })
     expect(result.type).toBe('news')
-    expect(result.data).toHaveProperty('symbol', 'AAPL')
+    expect(mockSearch).toHaveBeenCalled()
+    expect(result.data).toHaveProperty('news')
     expect(result.data).toHaveProperty('sector', 'Technology')
-    expect(result.data).toHaveProperty('suggestions')
   })
 
-  it('fetches technicals data', async () => {
+  it('fetches technicals data via chart()', async () => {
     const result = await source.fetch({ ticker: 'AAPL', market: 'US', type: 'technicals' })
     expect(result.type).toBe('technicals')
-    expect(result.data).toHaveProperty('fiftyDayAverage', 155)
-    expect(result.data).toHaveProperty('twoHundredDayAverage', 145)
+    expect(mockChart).toHaveBeenCalled()
+    expect(result.data).toHaveProperty('quotes')
   })
 })

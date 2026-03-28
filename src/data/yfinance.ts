@@ -5,27 +5,13 @@ import type { DataQuery, DataResult } from '../agents/base/types.js'
 
 export class YFinanceSource implements IDataSource {
   readonly name = 'yfinance'
-  // yahoo-finance2 v2.14 exports a class via createYahooFinance; only quote() and autoc() are available
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private yf: any
-  // Cache quote results to avoid redundant API calls (prevents 429 rate limiting)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private quoteCache = new Map<string, { data: any; ts: number }>()
-  private readonly cacheTTL = 60_000 // 1 minute
 
   constructor() {
-    this.yf = new (YahooFinance as any)()
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async getQuote(ticker: string): Promise<any> {
-    const cached = this.quoteCache.get(ticker)
-    if (cached && Date.now() - cached.ts < this.cacheTTL) {
-      return cached.data
-    }
-    const q = await this.yf.quote(ticker)
-    this.quoteCache.set(ticker, { data: q, ts: Date.now() })
-    return q
+    this.yf = new (YahooFinance as any)({
+      suppressNotices: ['yahooSurvey', 'ripHistorical'],
+    })
   }
 
   async fetch(query: DataQuery): Promise<DataResult> {
@@ -34,64 +20,51 @@ export class YFinanceSource implements IDataSource {
     let data: unknown
 
     switch (type) {
-      case 'ohlcv':
+      case 'ohlcv': {
+        // Fetch 90 days of daily OHLCV bars
+        const period1 = query.from ?? new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+        const period2 = query.to ?? new Date()
+        data = await this.yf.chart(ticker, {
+          period1: period1.toISOString().slice(0, 10),
+          period2: period2.toISOString().slice(0, 10),
+          interval: '1d',
+        })
+        break
+      }
       case 'technicals': {
-        const q = await this.getQuote(ticker)
-        data = {
-          symbol: q.symbol,
-          price: q.regularMarketPrice,
-          open: q.regularMarketOpen,
-          high: q.regularMarketDayHigh,
-          low: q.regularMarketDayLow,
-          volume: q.regularMarketVolume,
-          previousClose: q.regularMarketPreviousClose,
-          change: q.regularMarketChange,
-          changePercent: q.regularMarketChangePercent,
-          fiftyTwoWeekHigh: q.fiftyTwoWeekHigh,
-          fiftyTwoWeekLow: q.fiftyTwoWeekLow,
-          fiftyDayAverage: q.fiftyDayAverage,
-          twoHundredDayAverage: q.twoHundredDayAverage,
-          averageVolume: q.averageDailyVolume3Month,
-        }
+        // Fetch 180 days for longer-window indicators (SMA200, etc.)
+        const period1 = query.from ?? new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+        const period2 = query.to ?? new Date()
+        data = await this.yf.chart(ticker, {
+          period1: period1.toISOString().slice(0, 10),
+          period2: period2.toISOString().slice(0, 10),
+          interval: '1d',
+        })
         break
       }
       case 'fundamentals': {
-        const q = await this.getQuote(ticker)
-        data = {
-          symbol: q.symbol,
-          marketCap: q.marketCap,
-          trailingPE: q.trailingPE,
-          forwardPE: q.forwardPE,
-          priceToBook: q.priceToBook,
-          trailingEps: q.epsTrailingTwelveMonths,
-          forwardEps: q.epsForward,
-          dividendYield: q.trailingAnnualDividendYield,
-          earningsTimestamp: q.earningsTimestamp,
-          analystTargetPrice: q.targetMeanPrice,
-          numberOfAnalystOpinions: q.numberOfAnalystOpinions,
-          recommendationMean: q.averageAnalystRating,
-          enterpriseValue: q.enterpriseValue,
-          priceToSalesTrailing12Months: q.priceToSalesTrailing12Months,
-        }
+        const [quoteSummary, quote] = await Promise.all([
+          this.yf.quoteSummary(ticker, {
+            modules: ['financialData', 'defaultKeyStatistics', 'earningsHistory', 'incomeStatementHistory', 'balanceSheetHistory'],
+          }),
+          this.yf.quote(ticker),
+        ])
+        data = { quoteSummary, quote }
         break
       }
       case 'news': {
-        const [q, autoc] = await Promise.all([
-          this.getQuote(ticker),
-          this.yf.autoc(ticker).catch(() => ({ Result: [] })),
+        const [searchResult, quote] = await Promise.all([
+          this.yf.search(ticker),
+          this.yf.quote(ticker),
         ])
         data = {
-          symbol: q.symbol,
-          shortName: q.shortName,
-          longName: q.longName,
-          sector: q.sector,
-          industry: q.industry,
-          exchange: q.exchange,
-          quoteType: q.quoteType,
-          analystRating: q.averageAnalystRating,
-          analystTargetPrice: q.targetMeanPrice,
-          suggestions: autoc?.Result ?? [],
-          note: 'News feed unavailable in yahoo-finance2 v2.14; using quote + autoc data instead.',
+          news: searchResult.news ?? [],
+          symbol: quote.symbol,
+          shortName: quote.shortName,
+          sector: quote.sector,
+          industry: quote.industry,
+          analystRating: quote.averageAnalystRating,
+          analystTargetPrice: quote.targetMeanPrice,
         }
         break
       }
