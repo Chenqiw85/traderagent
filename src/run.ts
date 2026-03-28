@@ -15,6 +15,7 @@ import { LLMRegistry } from './llm/registry.js'
 import { FinnhubSource } from './data/finnhub.js'
 import { YFinanceSource } from './data/yfinance.js'
 import { FallbackDataSource } from './data/FallbackDataSource.js'
+import { PostgresDataSource } from './db/PostgresDataSource.js'
 import { QdrantVectorStore } from './rag/qdrant.js'
 import { InMemoryVectorStore } from './rag/InMemoryVectorStore.js'
 import { Embedder } from './rag/embedder.js'
@@ -28,6 +29,13 @@ console.log(`\nAnalyzing ${ticker} on ${market} market...\n`)
 
 // --- Data source fallback chain ---
 const dataSources = []
+
+// Try Postgres first (local DB cache)
+if (process.env['DATABASE_URL']) {
+  dataSources.push(new PostgresDataSource())
+}
+
+// API fallbacks
 if (process.env['FINNHUB_API_KEY']) {
   dataSources.push(new FinnhubSource())
 }
