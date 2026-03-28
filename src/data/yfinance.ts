@@ -8,9 +8,24 @@ export class YFinanceSource implements IDataSource {
   // yahoo-finance2 v2.14 exports a class via createYahooFinance; only quote() and autoc() are available
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private yf: any
+  // Cache quote results to avoid redundant API calls (prevents 429 rate limiting)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private quoteCache = new Map<string, { data: any; ts: number }>()
+  private readonly cacheTTL = 60_000 // 1 minute
 
   constructor() {
     this.yf = new (YahooFinance as any)()
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getQuote(ticker: string): Promise<any> {
+    const cached = this.quoteCache.get(ticker)
+    if (cached && Date.now() - cached.ts < this.cacheTTL) {
+      return cached.data
+    }
+    const q = await this.yf.quote(ticker)
+    this.quoteCache.set(ticker, { data: q, ts: Date.now() })
+    return q
   }
 
   async fetch(query: DataQuery): Promise<DataResult> {
@@ -21,8 +36,7 @@ export class YFinanceSource implements IDataSource {
     switch (type) {
       case 'ohlcv':
       case 'technicals': {
-        // quote() returns regularMarketPrice, Open, High, Low, Volume, 52-week range, etc.
-        const q = await this.yf.quote(ticker)
+        const q = await this.getQuote(ticker)
         data = {
           symbol: q.symbol,
           price: q.regularMarketPrice,
@@ -42,7 +56,7 @@ export class YFinanceSource implements IDataSource {
         break
       }
       case 'fundamentals': {
-        const q = await this.yf.quote(ticker)
+        const q = await this.getQuote(ticker)
         data = {
           symbol: q.symbol,
           marketCap: q.marketCap,
@@ -62,9 +76,8 @@ export class YFinanceSource implements IDataSource {
         break
       }
       case 'news': {
-        // autoc() returns autocomplete suggestions; use quote for basic info since no news API in this version
         const [q, autoc] = await Promise.all([
-          this.yf.quote(ticker),
+          this.getQuote(ticker),
           this.yf.autoc(ticker).catch(() => ({ Result: [] })),
         ])
         data = {
@@ -77,7 +90,6 @@ export class YFinanceSource implements IDataSource {
           quoteType: q.quoteType,
           analystRating: q.averageAnalystRating,
           analystTargetPrice: q.targetMeanPrice,
-          // autoc results may include news titles in some responses
           suggestions: autoc?.Result ?? [],
           note: 'News feed unavailable in yahoo-finance2 v2.14; using quote + autoc data instead.',
         }
