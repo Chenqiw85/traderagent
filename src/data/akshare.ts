@@ -1,5 +1,6 @@
 // src/data/akshare.ts
 import type { IDataSource } from './IDataSource.js'
+import { RateLimitError } from './errors.js'
 import type { DataQuery, DataResult } from '../agents/base/types.js'
 
 type AkShareConfig = {
@@ -32,6 +33,11 @@ export class AkShareSource implements IDataSource {
       body: JSON.stringify(params),
     })
     if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after')
+        const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : undefined
+        throw new RateLimitError('akshare', 429, retryAfterMs)
+      }
       throw new Error(`AkShare request failed: ${response.status} ${response.statusText}`)
     }
     return response.json()

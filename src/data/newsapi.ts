@@ -1,5 +1,6 @@
 // src/data/newsapi.ts
 import type { IDataSource } from './IDataSource.js'
+import { RateLimitError } from './errors.js'
 import type { DataQuery, DataResult } from '../agents/base/types.js'
 
 type NewsAPIConfig = {
@@ -33,6 +34,11 @@ export class NewsAPISource implements IDataSource {
 
     const response = await fetch(url)
     if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after')
+        const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : undefined
+        throw new RateLimitError('newsapi', 429, retryAfterMs)
+      }
       throw new Error(`NewsAPI request failed: ${response.status} ${response.statusText}`)
     }
     const data = await response.json()

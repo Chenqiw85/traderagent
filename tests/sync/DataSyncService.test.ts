@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { IDataSource } from '../../src/data/IDataSource.js'
 import type { DataQuery, DataResult } from '../../src/agents/base/types.js'
+import { RateLimitError } from '../../src/data/errors.js'
+import { RateLimitedDataSource } from '../../src/data/RateLimitedDataSource.js'
 
 const mockOhlcvCreateMany = vi.fn()
 const mockFundamentalsCreate = vi.fn()
@@ -86,6 +88,73 @@ describe('DataSyncService', () => {
       (call: any[]) => call[0].data.status === 'failed'
     )
     expect(failCalls.length).toBeGreaterThan(0)
+  })
+
+  it('retries on RateLimitError with separate budget and succeeds', async () => {
+    let callCount = 0
+    const source = makeSource('rate-limited', async (q) => {
+      callCount++
+      if (callCount <= 1) throw new RateLimitError('rate-limited', 429, 10)
+      return { ticker: q.ticker, market: q.market, type: q.type, data: {}, fetchedAt: new Date() }
+    })
+
+    mockOhlcvCreateMany.mockResolvedValue({ count: 0 })
+    mockFundamentalsCreate.mockResolvedValue({})
+    mockNewsCreateMany.mockResolvedValue({ count: 0 })
+    mockFetchLogCreate.mockResolvedValue({})
+
+    const service = new DataSyncService([source], { maxRetries: 1, baseDelayMs: 1, rateLimitBackoffFloorMs: 10 })
+    await service.syncTicker('AAPL', 'US')
+
+    expect(callCount).toBeGreaterThan(1)
+    const successCalls = mockFetchLogCreate.mock.calls.filter(
+      (call: any[]) => call[0].data.status === 'success'
+    )
+    expect(successCalls.length).toBeGreaterThan(0)
+  })
+
+  it('does not count 429 retries against normal retry budget', async () => {
+    let callCount = 0
+    const source = makeSource('mixed-errors', async (q) => {
+      callCount++
+      if (callCount === 1) throw new RateLimitError('mixed-errors', 429, 10)
+      if (callCount === 2) throw new Error('Server error')
+      return { ticker: q.ticker, market: q.market, type: q.type, data: {}, fetchedAt: new Date() }
+    })
+
+    mockOhlcvCreateMany.mockResolvedValue({ count: 0 })
+    mockFundamentalsCreate.mockResolvedValue({})
+    mockNewsCreateMany.mockResolvedValue({ count: 0 })
+    mockFetchLogCreate.mockResolvedValue({})
+
+    const service = new DataSyncService([source], { maxRetries: 2, baseDelayMs: 1, rateLimitBackoffFloorMs: 10 })
+    await service.syncTicker('AAPL', 'US')
+
+    expect(callCount).toBeGreaterThanOrEqual(3)
+  })
+
+  it('calls adjustRate on RateLimitedDataSource when 429 is received', async () => {
+    let callCount = 0
+    const inner = makeSource('adjustable', async (q) => {
+      callCount++
+      if (callCount <= 1) throw new RateLimitError('adjustable', 429, 10)
+      return { ticker: q.ticker, market: q.market, type: q.type, data: {}, fetchedAt: new Date() }
+    })
+
+    const rateLimited = new RateLimitedDataSource(inner, {
+      intervalCap: 60, intervalMs: 60000, concurrency: 1,
+    })
+    const adjustSpy = vi.spyOn(rateLimited, 'adjustRate')
+
+    mockOhlcvCreateMany.mockResolvedValue({ count: 0 })
+    mockFundamentalsCreate.mockResolvedValue({})
+    mockNewsCreateMany.mockResolvedValue({ count: 0 })
+    mockFetchLogCreate.mockResolvedValue({})
+
+    const service = new DataSyncService([rateLimited], { maxRetries: 1, baseDelayMs: 1, rateLimitBackoffFloorMs: 10 })
+    await service.syncTicker('AAPL', 'US')
+
+    expect(adjustSpy).toHaveBeenCalled()
   })
 
   it('syncAll iterates all active watchlist tickers', async () => {

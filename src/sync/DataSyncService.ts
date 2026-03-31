@@ -1,24 +1,34 @@
 // src/sync/DataSyncService.ts
 import type { IDataSource } from '../data/IDataSource.js'
 import type { DataType, Market } from '../agents/base/types.js'
+import { RateLimitError } from '../data/errors.js'
+import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
 import { prisma } from '../db/client.js'
 
 const DATA_TYPES: DataType[] = ['ohlcv', 'fundamentals', 'news', 'technicals']
 
+const RATE_LIMIT_BACKOFF_FLOOR_MS = 5_000
+
 type SyncOptions = {
   maxRetries?: number
+  maxRateLimitRetries?: number
   baseDelayMs?: number
+  rateLimitBackoffFloorMs?: number
 }
 
 export class DataSyncService {
   private sources: IDataSource[]
   private maxRetries: number
+  private maxRateLimitRetries: number
   private baseDelayMs: number
+  private rateLimitBackoffFloorMs: number
 
   constructor(sources: IDataSource[], options?: SyncOptions) {
     this.sources = sources
     this.maxRetries = options?.maxRetries ?? 3
+    this.maxRateLimitRetries = options?.maxRateLimitRetries ?? 2
     this.baseDelayMs = options?.baseDelayMs ?? 1000
+    this.rateLimitBackoffFloorMs = options?.rateLimitBackoffFloorMs ?? RATE_LIMIT_BACKOFF_FLOOR_MS
   }
 
   async syncAll(): Promise<void> {
@@ -45,8 +55,11 @@ export class DataSyncService {
 
     for (const source of this.sources) {
       let lastError: Error | null = null
+      let rateLimitRetries = 0
+      let errorRetries = 0
 
-      for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      const maxAttempts = this.maxRetries + this.maxRateLimitRetries
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
           const result = await source.fetch({ ticker, market, type: dataType })
           await this.writeToDb(ticker, market, dataType, result.data, source.name)
@@ -54,15 +67,36 @@ export class DataSyncService {
           return // success
         } catch (err) {
           lastError = err as Error
-          if (attempt < this.maxRetries) {
-            const delay = this.baseDelayMs * Math.pow(4, attempt - 1)
+
+          if (RateLimitError.isRateLimitError(err)) {
+            rateLimitRetries++
+            if (rateLimitRetries > this.maxRateLimitRetries) break
+
+            // Dynamically slow the queue if source supports it
+            if (source instanceof RateLimitedDataSource) {
+              source.adjustRate()
+            }
+
+            const waitMs = Math.max(
+              err.retryAfterMs ?? this.rateLimitBackoffFloorMs,
+              this.rateLimitBackoffFloorMs,
+            )
+            console.warn(
+              `[DataSync] ${source.name}/${dataType} rate limited for ${ticker}, waiting ${waitMs}ms (attempt ${rateLimitRetries}/${this.maxRateLimitRetries})`,
+            )
+            await new Promise((r) => setTimeout(r, waitMs))
+          } else {
+            errorRetries++
+            if (errorRetries >= this.maxRetries) break
+
+            const delay = this.baseDelayMs * Math.pow(4, errorRetries - 1)
             await new Promise((r) => setTimeout(r, delay))
           }
         }
       }
 
       console.warn(
-        `[DataSync] ${source.name}/${dataType} failed for ${ticker} after ${this.maxRetries} retries: ${lastError?.message}`,
+        `[DataSync] ${source.name}/${dataType} failed for ${ticker} after retries: ${lastError?.message}`,
       )
     }
 
@@ -123,7 +157,6 @@ export class DataSyncService {
         break
       }
       case 'technicals': {
-        // Raw technicals data is OHLCV — store as ohlcv with longer window
         const rawData = data as { quotes?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
         const bars = Array.isArray(rawData) ? rawData : rawData.quotes ?? []
         if (bars.length === 0) return

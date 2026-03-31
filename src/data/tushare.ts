@@ -1,5 +1,6 @@
 // src/data/tushare.ts
 import type { IDataSource } from './IDataSource.js'
+import { RateLimitError } from './errors.js'
 import type { DataQuery, DataResult } from '../agents/base/types.js'
 
 type TushareConfig = {
@@ -35,6 +36,11 @@ export class TushareSource implements IDataSource {
       body: JSON.stringify(body),
     })
     if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after')
+        const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : undefined
+        throw new RateLimitError('tushare', 429, retryAfterMs)
+      }
       throw new Error(`Tushare request failed: ${response.status} ${response.statusText}`)
     }
     const json = await response.json() as { code: number; msg: string; data: unknown }

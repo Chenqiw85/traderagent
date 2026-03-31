@@ -15,6 +15,8 @@ import { LLMRegistry } from './llm/registry.js'
 import { FinnhubSource } from './data/finnhub.js'
 import { YFinanceSource } from './data/yfinance.js'
 import { FallbackDataSource } from './data/FallbackDataSource.js'
+import { RateLimitedDataSource } from './data/RateLimitedDataSource.js'
+import { rateLimitDefaults } from './config/rateLimits.js'
 import { PostgresDataSource } from './db/PostgresDataSource.js'
 import { QdrantVectorStore } from './rag/qdrant.js'
 import { InMemoryVectorStore } from './rag/InMemoryVectorStore.js'
@@ -22,24 +24,25 @@ import { Embedder } from './rag/embedder.js'
 import { OllamaEmbedder } from './rag/OllamaEmbedder.js'
 import { agentConfig, detectRAGMode } from './config/config.js'
 import type { Market } from './agents/base/types.js'
+import type { IDataSource } from './data/IDataSource.js'
 const ticker = process.argv[2] ?? 'AAPL'
 const market = (process.argv[3] ?? 'US') as Market
 
 console.log(`\nAnalyzing ${ticker} on ${market} market...\n`)
 
 // --- Data source fallback chain ---
-const dataSources = []
+const dataSources: IDataSource[] = []
 
-// Try Postgres first (local DB cache)
+// Try Postgres first (local DB cache — no rate limiting needed)
 if (process.env['DATABASE_URL']) {
   dataSources.push(new PostgresDataSource())
 }
 
-// API fallbacks
+// API fallbacks — wrap with rate limiter
 if (process.env['FINNHUB_API_KEY']) {
-  dataSources.push(new FinnhubSource())
+  dataSources.push(new RateLimitedDataSource(new FinnhubSource(), rateLimitDefaults['finnhub']))
 }
-dataSources.push(new YFinanceSource())
+dataSources.push(new RateLimitedDataSource(new YFinanceSource(), rateLimitDefaults['yfinance']))
 
 const fallbackSource = new FallbackDataSource('price-chain', dataSources)
 

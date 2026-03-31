@@ -1,5 +1,6 @@
 // src/data/finnhub.ts
 import type { IDataSource } from './IDataSource.js'
+import { RateLimitError } from './errors.js'
 import type { DataQuery, DataResult } from '../agents/base/types.js'
 
 type FinnhubConfig = {
@@ -25,6 +26,11 @@ export class FinnhubSource implements IDataSource {
     const url = `${this.baseURL}${path}?${searchParams.toString()}`
     const response = await fetch(url)
     if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after')
+        const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : undefined
+        throw new RateLimitError('finnhub', 429, retryAfterMs)
+      }
       throw new Error(`Finnhub request failed: ${response.status} ${response.statusText}`)
     }
     return response.json()
