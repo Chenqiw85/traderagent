@@ -8,6 +8,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "run:analyze": "tsx --env-file=.env src/run.ts",
+    "trader:train": "tsx --env-file=.env src/cli/train.ts",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:sync": "tsx --env-file=.env src/cli/sync.ts",

@@ -137,10 +137,19 @@ export abstract class BaseResearcher implements IAgent {
     if (!this.vectorStore || !this.embedder) return ''
     const query = this.buildQuery(report)
     const embedding = await this.embedder.embed(query)
-    const docs = await this.vectorStore.search(embedding, this.topK, {
+    const marketDocs = await this.vectorStore.search(embedding, this.topK, {
       must: [{ ticker: report.ticker }],
     })
-    return docs.map((d) => d.content).join('\n\n')
+    const lessonDocs = await this.vectorStore.search(embedding, 3, {
+      must: [{ ticker: report.ticker }, { type: 'lesson' }],
+    })
+
+    const marketContext = marketDocs.map((doc) => doc.content).join('\n\n')
+    const lessonContext = lessonDocs.map((doc) => doc.content).join('\n\n')
+
+    if (!lessonContext) return marketContext
+    if (!marketContext) return `=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
+    return `${marketContext}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
   }
 
   protected parseFinding(response: string): Finding {

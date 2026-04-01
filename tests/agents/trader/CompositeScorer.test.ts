@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { CompositeScorer } from '../../src/agents/trader/CompositeScorer.js'
-import type { Decision } from '../../src/agents/base/types.js'
+import { CompositeScorer } from '../../../src/agents/trader/CompositeScorer.js'
+import type { Decision } from '../../../src/agents/base/types.js'
 
 function makeDecision(overrides: Partial<Decision> = {}): Decision {
   return {

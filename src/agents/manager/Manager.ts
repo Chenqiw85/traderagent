@@ -2,10 +2,14 @@
 import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, Decision, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
+import type { IVectorStore } from '../../rag/IVectorStore.js'
+import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { parseJson } from '../../utils/parseJson.js'
 
 type ManagerConfig = {
   llm: ILLMProvider
+  vectorStore?: IVectorStore
+  embedder?: IEmbedder
 }
 
 export class Manager implements IAgent {
@@ -13,9 +17,13 @@ export class Manager implements IAgent {
   readonly role: AgentRole = 'manager'
 
   private llm: ILLMProvider
+  private vectorStore?: IVectorStore
+  private embedder?: IEmbedder
 
   constructor(config: ManagerConfig) {
     this.llm = config.llm
+    this.vectorStore = config.vectorStore
+    this.embedder = config.embedder
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
@@ -24,11 +32,15 @@ export class Manager implements IAgent {
     }
 
     const context = this.buildContext(report)
+    const lessonContext = await this.retrieveLessons(report)
+    const fullContext = lessonContext
+      ? `${context}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
+      : context
     const response = await this.llm.chat([
       {
         role: 'system',
         content: `You are a senior portfolio manager making a final trading decision for ${report.ticker}.
-${context}
+${fullContext}
 Weigh the bull and bear evidence against the risk assessment. Make a final BUY, SELL, or HOLD recommendation.
 Respond with ONLY a JSON object matching this schema:
 {
@@ -45,6 +57,18 @@ Respond with ONLY a JSON object matching this schema:
 
     const decision = this.parseDecision(response)
     return { ...report, finalDecision: decision }
+  }
+
+  private async retrieveLessons(report: TradingReport): Promise<string> {
+    if (!this.vectorStore || !this.embedder) return ''
+
+    const query = `trading decision lessons for ${report.ticker}`
+    const embedding = await this.embedder.embed(query)
+    const docs = await this.vectorStore.search(embedding, 3, {
+      must: [{ ticker: report.ticker }, { type: 'lesson' }],
+    })
+
+    return docs.map((doc) => doc.content).join('\n\n')
   }
 
   private buildContext(report: TradingReport): string {

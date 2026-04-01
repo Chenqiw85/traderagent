@@ -19,6 +19,15 @@ export const agentConfig: AgentConfigMap = {
   riskAnalyst:         { llm: 'deepseek', model: 'deepseek-reasoner' },
   riskManager:         { llm: 'deepseek', model: 'deepseek-reasoner' },
   manager:             { llm: 'deepseek', model: 'deepseek-reasoner' },
+  // Trader training pipeline — local Ollama defaults for iterative backtesting
+  traderPipelineBull:         { llm: 'ollama', model: 'llama3.1' },
+  traderPipelineBear:         { llm: 'ollama', model: 'llama3.1' },
+  traderPipelineNews:         { llm: 'ollama', model: 'llama3.1' },
+  traderPipelineFundamentals: { llm: 'ollama', model: 'llama3.1' },
+  traderPipelineRisk:         { llm: 'ollama', model: 'llama3.1' },
+  traderPipelineRiskMgr:      { llm: 'ollama', model: 'llama3.1' },
+  traderPipelineManager:      { llm: 'ollama', model: 'llama3.1' },
+  traderLessonExtractor:      { llm: 'ollama', model: 'llama3.1' },
 }
 
 export const dataSourceConfig = {

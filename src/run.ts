@@ -112,7 +112,7 @@ const orchestrator = new Orchestrator({
     new RiskAnalyst({ llm: wrap('riskAnalyst') }),
     new RiskManager({ llm: wrap('riskManager') }),
   ],
-  manager: new Manager({ llm: wrap('manager') }),
+  manager: new Manager({ llm: wrap('manager'), vectorStore, embedder }),
 })
 
 try {
