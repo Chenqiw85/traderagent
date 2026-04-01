@@ -12,6 +12,7 @@ import { RiskAnalyst } from './agents/risk/RiskAnalyst.js'
 import { RiskManager } from './agents/risk/RiskManager.js'
 import { Manager } from './agents/manager/Manager.js'
 import { LLMRegistry } from './llm/registry.js'
+import { TokenProfiler } from './llm/TokenProfiler.js'
 import { FinnhubSource } from './data/finnhub.js'
 import { YFinanceSource } from './data/yfinance.js'
 import { FallbackDataSource } from './data/FallbackDataSource.js'
@@ -25,10 +26,26 @@ import { OllamaEmbedder } from './rag/OllamaEmbedder.js'
 import { agentConfig, detectRAGMode } from './config/config.js'
 import type { Market } from './agents/base/types.js'
 import type { IDataSource } from './data/IDataSource.js'
-const ticker = process.argv[2] ?? 'AAPL'
-const market = (process.argv[3] ?? 'US') as Market
 
-console.log(`\nAnalyzing ${ticker} on ${market} market...\n`)
+const VALID_MARKETS = new Set(['US', 'CN', 'HK'])
+
+const ticker = process.argv[2]
+const market = process.argv[3] as Market | undefined
+
+if (!ticker || VALID_MARKETS.has(ticker)) {
+  console.error(`Usage: npm run run:analyze -- <TICKER> [MARKET]`)
+  console.error(`  TICKER  Stock symbol (e.g. AAPL, SNDK)`)
+  console.error(`  MARKET  Market: US (default), CN, HK`)
+  if (VALID_MARKETS.has(ticker ?? '')) {
+    console.error(`\nError: "${ticker}" looks like a market, not a ticker.`)
+    console.error(`Did you mean: npm run run:analyze -- <TICKER> ${ticker}`)
+  }
+  process.exit(1)
+}
+
+const resolvedMarket: Market = market && VALID_MARKETS.has(market) ? market : 'US'
+
+console.log(`\nAnalyzing ${ticker} on ${resolvedMarket} market...\n`)
 
 // --- Data source fallback chain ---
 const dataSources: IDataSource[] = []
@@ -75,6 +92,9 @@ const registry = new LLMRegistry(agentConfig)
 
 const researcherConfig = { vectorStore, embedder }
 
+// Wrap each LLM provider with TokenProfiler to log per-call token usage
+const wrap = (agent: string) => new TokenProfiler(registry.get(agent), agent)
+
 const orchestrator = new Orchestrator({
   dataFetcher: new DataFetcher({
     dataSources: [fallbackSource],
@@ -83,20 +103,20 @@ const orchestrator = new Orchestrator({
   }),
   technicalAnalyzer: new TechnicalAnalyzer({ dataSource: fallbackSource }),
   researcherTeam: [
-    new BullResearcher({ llm: registry.get('bullResearcher'), ...researcherConfig }),
-    new BearResearcher({ llm: registry.get('bearResearcher'), ...researcherConfig }),
-    new NewsAnalyst({ llm: registry.get('newsAnalyst'), ...researcherConfig }),
-    new FundamentalsAnalyst({ llm: registry.get('fundamentalsAnalyst'), ...researcherConfig }),
+    new BullResearcher({ llm: wrap('bullResearcher'), ...researcherConfig }),
+    new BearResearcher({ llm: wrap('bearResearcher'), ...researcherConfig }),
+    new NewsAnalyst({ llm: wrap('newsAnalyst'), ...researcherConfig }),
+    new FundamentalsAnalyst({ llm: wrap('fundamentalsAnalyst'), ...researcherConfig }),
   ],
   riskTeam: [
-    new RiskAnalyst({ llm: registry.get('riskAnalyst') }),
-    new RiskManager({ llm: registry.get('riskManager') }),
+    new RiskAnalyst({ llm: wrap('riskAnalyst') }),
+    new RiskManager({ llm: wrap('riskManager') }),
   ],
-  manager: new Manager({ llm: registry.get('manager') }),
+  manager: new Manager({ llm: wrap('manager') }),
 })
 
 try {
-  const report = await orchestrator.run(ticker, market)
+  const report = await orchestrator.run(ticker, resolvedMarket)
 
   console.log('='.repeat(60))
   console.log(`FINAL DECISION: ${report.ticker} (${report.market})`)
@@ -131,7 +151,10 @@ try {
     const ra = report.riskAssessment
     console.log(`\nRisk: ${ra.riskLevel} | VaR: ${(ra.metrics.VaR * 100).toFixed(2)}% | Volatility: ${(ra.metrics.volatility * 100).toFixed(1)}%`)
   }
+
+  TokenProfiler.printSummary()
 } catch (err) {
+  TokenProfiler.printSummary()
   console.error(`\nPIPELINE FAILED: ${(err as Error).message}`)
   process.exit(1)
 }

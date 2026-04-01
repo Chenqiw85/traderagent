@@ -45,7 +45,9 @@ export class FinnhubSource implements IDataSource {
         const from = (query.from ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
           .toISOString().slice(0, 10)
         const to = (query.to ?? new Date()).toISOString().slice(0, 10)
-        data = await this.request('/company-news', { symbol: ticker, from, to })
+        const allNews = await this.request('/company-news', { symbol: ticker, from, to })
+        // Keep only the 10 most recent articles to limit token usage
+        data = Array.isArray(allNews) ? allNews.slice(0, 10) : allNews
         break
       }
       case 'fundamentals': {
@@ -54,6 +56,11 @@ export class FinnhubSource implements IDataSource {
           this.request('/stock/financials-reported', { symbol: ticker }),
           this.request('/stock/metric', { symbol: ticker, metric: 'all' }),
         ])
+        // Keep only the 4 most recent filings (1 year of quarterly reports)
+        const filings = financials as Record<string, unknown>
+        if (Array.isArray(filings.data)) {
+          filings.data = filings.data.slice(0, 4)
+        }
         data = { profile, financials, metrics }
         break
       }

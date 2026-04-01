@@ -87,15 +87,50 @@ export abstract class BaseResearcher implements IAgent {
     if (report.rawData.length === 0) return ''
     return report.rawData
       .map((r) => {
-        let payload: string
-        try {
-          payload = JSON.stringify(r.data, null, 2)
-        } catch {
-          payload = String(r.data)
-        }
-        return `--- ${r.type.toUpperCase()} (${r.ticker} / ${r.market}, fetched ${r.fetchedAt.toISOString()}) ---\n${payload}`
+        const header = `--- ${r.type.toUpperCase()} (${r.ticker} / ${r.market}, fetched ${r.fetchedAt.toISOString()}) ---`
+        const payload = this.summarizeDataEntry(r.type, r.data)
+        return `${header}\n${payload}`
       })
       .join('\n\n')
+  }
+
+  /**
+   * Produce a token-efficient summary of a raw data entry.
+   * OHLCV / technicals are already captured via computedIndicators,
+   * so we only include a compact tail of recent bars.
+   */
+  private summarizeDataEntry(type: DataType, data: unknown): string {
+    if (type === 'ohlcv' || type === 'technicals') {
+      const bars = this.extractBars(data)
+      if (bars.length === 0) return '(no bars)'
+      const recent = bars.slice(-10) // last 10 trading days
+      const header = `${bars.length} bars total, showing last ${recent.length}:`
+      const rows = recent.map((b: Record<string, unknown>) =>
+        `  ${String(b.date ?? '').slice(0, 10)} O=${Number(b.open ?? b.Open).toFixed(2)} H=${Number(b.high ?? b.High).toFixed(2)} L=${Number(b.low ?? b.Low).toFixed(2)} C=${Number(b.close ?? b.Close ?? b.adjClose).toFixed(2)} V=${Number(b.volume ?? b.Volume)}`
+      )
+      return `${header}\n${rows.join('\n')}`
+    }
+    // For fundamentals/news keep full data but compact (no pretty-print)
+    try {
+      return JSON.stringify(data)
+    } catch {
+      return String(data)
+    }
+  }
+
+  /** Extract bar array from various OHLCV data shapes */
+  private extractBars(data: unknown): Record<string, unknown>[] {
+    if (Array.isArray(data)) return data
+    if (data && typeof data === 'object') {
+      const d = data as Record<string, unknown>
+      if (Array.isArray(d.quotes)) return d.quotes as Record<string, unknown>[]
+      // Finnhub candle format
+      if (d.s === 'ok' && Array.isArray(d.c)) {
+        const c = d.c as number[], o = d.o as number[], h = d.h as number[], l = d.l as number[], v = d.v as number[], t = d.t as number[]
+        return c.map((_, i) => ({ open: o[i], high: h[i], low: l[i], close: c[i], volume: v[i], date: t?.[i] ? new Date(t[i] * 1000).toISOString() : '' }))
+      }
+    }
+    return []
   }
 
   protected async retrieveContext(report: TradingReport): Promise<string> {

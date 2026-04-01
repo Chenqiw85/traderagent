@@ -68,20 +68,30 @@ export class TechnicalAnalyzer implements IAgent {
       // Finnhub candle format
       if (d.s === 'ok' && Array.isArray(d.c)) {
         const c = d.c as number[], h = d.h as number[], l = d.l as number[], o = d.o as number[], v = d.v as number[]
-        return c.map((_, i) => ({ open: o[i], high: h[i], low: l[i], close: c[i], volume: v[i] }))
+        return c.map((_, i) => ({ open: Number(o[i]), high: Number(h[i]), low: Number(l[i]), close: Number(c[i]), volume: Number(v[i]) }))
+      }
+      // yahoo-finance2 chart format: { quotes: [...] }
+      if (Array.isArray(d.quotes)) {
+        return (d.quotes as Record<string, unknown>[]).map((bar) => ({
+          open: Number(bar.open ?? bar.Open),
+          high: Number(bar.high ?? bar.High),
+          low: Number(bar.low ?? bar.Low),
+          close: Number(bar.close ?? bar.Close ?? bar.adjClose),
+          volume: Number(bar.volume ?? bar.Volume),
+        }))
       }
       // Single quote object fallback
       if (d.price != null) {
         return [{ open: (d.open as number) ?? (d.price as number), high: (d.high as number) ?? (d.price as number), low: (d.low as number) ?? (d.price as number), close: d.price as number, volume: (d.volume as number) ?? 0 }]
       }
-      throw new Error('TechnicalAnalyzer: unrecognized OHLCV data format')
+      throw new Error(`TechnicalAnalyzer: unrecognized OHLCV data format (keys: ${Object.keys(d).join(', ')})`)
     }
     return data.map((bar: Record<string, unknown>) => ({
-      open: (bar.open ?? bar.Open) as number,
-      high: (bar.high ?? bar.High) as number,
-      low: (bar.low ?? bar.Low) as number,
-      close: (bar.close ?? bar.Close ?? bar.adjClose) as number,
-      volume: (bar.volume ?? bar.Volume) as number,
+      open: Number(bar.open ?? bar.Open),
+      high: Number(bar.high ?? bar.High),
+      low: Number(bar.low ?? bar.Low),
+      close: Number(bar.close ?? bar.Close ?? bar.adjClose),
+      volume: Number(bar.volume ?? bar.Volume),
     }))
   }
 
