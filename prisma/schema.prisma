@@ -83,3 +83,53 @@ model FetchLog {
   @@index([ticker])
   @@index([fetchedAt])
 }
+
+model BacktestRun {
+  id             String             @id @default(uuid())
+  ticker         String
+  market         String
+  startDate      DateTime
+  endDate        DateTime
+  passNumber     Int
+  windowType     String
+  totalDays      Int
+  winRate        Float
+  compositeScore Float
+  createdAt      DateTime           @default(now())
+  decisions      BacktestDecision[]
+
+  @@index([ticker])
+}
+
+model BacktestDecision {
+  id             String      @id @default(uuid())
+  runId          String
+  run            BacktestRun @relation(fields: [runId], references: [id])
+  date           DateTime
+  action         String
+  confidence     Float
+  stopLoss       Float?
+  takeProfit     Float?
+  actualReturn   Float
+  hitTakeProfit  Boolean
+  hitStopLoss    Boolean
+  compositeScore Float
+  reasoning      String
+
+  @@index([runId])
+}
+
+model Lesson {
+  id         String   @id @default(uuid())
+  ticker     String
+  market     String
+  passNumber Int
+  condition  String
+  lesson     String
+  evidence   String
+  confidence Float
+  createdAt  DateTime @default(now())
+
+  @@index([ticker])
+  @@index([passNumber])
+}
