@@ -1,22 +1,13 @@
 import type { Orchestrator } from '../../orchestrator/Orchestrator.js'
 import type { Decision, Market } from '../base/types.js'
-import type { ScoredDecision } from './types.js'
+import type { OhlcvBar, ScoredDecision } from './types.js'
 import type { CompositeScorer } from './CompositeScorer.js'
-
-type OhlcvBar = {
-  date: string
-  open: number
-  high: number
-  low: number
-  close: number
-  volume: number
-}
 
 type BacktesterConfig = {
   orchestrator: Orchestrator
   scorer: CompositeScorer
   ticker: string
-  market: Market | string
+  market: Market
   ohlcvBars: OhlcvBar[]
   evaluationDays: number
 }
@@ -38,7 +29,7 @@ export class Backtester {
     this.orchestrator = config.orchestrator
     this.scorer = config.scorer
     this.ticker = config.ticker
-    this.market = config.market as Market
+    this.market = config.market
     this.bars = config.ohlcvBars
     this.evaluationDays = config.evaluationDays
   }
@@ -62,7 +53,9 @@ export class Backtester {
         report = await this.orchestrator.run(this.ticker, this.market, {
           timestamp: barDate,
         })
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`[Backtester] Orchestrator failed for ${bar.date}: ${message}`)
         continue
       }
 

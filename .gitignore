@@ -4,5 +4,8 @@ docs/
 node_modules/
 dist/
 .env
+*.swp
+*.swo
+*~
 
 /generated/prisma

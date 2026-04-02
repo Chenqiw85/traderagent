@@ -5,17 +5,8 @@ import { Backtester } from './Backtester.js'
 import { CompositeScorer } from './CompositeScorer.js'
 import { LessonExtractor } from './LessonExtractor.js'
 import { LessonsJournal } from './LessonsJournal.js'
-import type { PassResult, ScoredDecision, TrainConfig, WindowResult } from './types.js'
+import type { OhlcvBar, PassResult, ScoredDecision, TrainConfig, WindowResult } from './types.js'
 import type { Orchestrator } from '../../orchestrator/Orchestrator.js'
-
-type OhlcvBar = {
-  date: string
-  open: number
-  high: number
-  low: number
-  close: number
-  volume: number
-}
 
 type TraderAgentConfig = {
   orchestratorFactory: () => Orchestrator

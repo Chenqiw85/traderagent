@@ -42,7 +42,9 @@ export class LessonExtractor {
           content: `Analyze these ${input.decisions.length} trading decisions for ${input.ticker} and extract lessons. Respond with a JSON array only.`,
         },
       ])
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[LessonExtractor] LLM call failed for ${input.ticker} pass ${input.passNumber}: ${message}`)
       return []
     }
 

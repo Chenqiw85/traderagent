@@ -2,6 +2,15 @@
 
 import type { Decision, Market } from '../base/types.js'
 
+export type OhlcvBar = {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
 export type ScoreBreakdown = {
   directional: number    // 0 or 1
   targetHit: number      // 0, 0.5, or 1

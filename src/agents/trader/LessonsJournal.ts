@@ -22,10 +22,15 @@ export class LessonsJournal {
     const texts = lessons.map((lesson) => this.buildContent(lesson))
     const embeddings = await this.embedder.embedBatch(texts)
 
+    if (embeddings.length !== texts.length) {
+      console.error(`[LessonsJournal] Embedding count mismatch: expected ${texts.length}, got ${embeddings.length}`)
+      return
+    }
+
     const docs: Document[] = lessons.map((lesson, index) => ({
       id: lesson.id,
       content: texts[index] ?? '',
-      embedding: embeddings[index],
+      embedding: embeddings[index]!,
       metadata: {
         type: 'lesson',
         ticker: lesson.ticker,

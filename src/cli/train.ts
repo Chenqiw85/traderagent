@@ -37,10 +37,12 @@ let lookbackMonths = 12
 for (let index = 2; index < args.length; index++) {
   const arg = args[index]
   if (arg === '--passes' && args[index + 1]) {
-    maxPasses = Number.parseInt(args[index + 1]!, 10)
+    const parsed = Number.parseInt(args[index + 1]!, 10)
+    if (!Number.isNaN(parsed) && parsed > 0) maxPasses = parsed
     index += 1
   } else if (arg === '--lookback' && args[index + 1]) {
-    lookbackMonths = Number.parseInt(args[index + 1]!, 10)
+    const parsed = Number.parseInt(args[index + 1]!, 10)
+    if (!Number.isNaN(parsed) && parsed > 0) lookbackMonths = parsed
     index += 1
   }
 }
@@ -73,12 +75,18 @@ let vectorStore: IVectorStore | undefined
 let embedder: IEmbedder | undefined
 
 if (ragMode === 'qdrant') {
+  const qdrantUrl = process.env['QDRANT_URL']
+  const openaiKey = process.env['OPENAI_API_KEY']
+  if (!qdrantUrl || !openaiKey) {
+    console.error('Qdrant RAG mode requires QDRANT_URL and OPENAI_API_KEY')
+    process.exit(1)
+  }
   vectorStore = new QdrantVectorStore({
-    url: process.env['QDRANT_URL']!,
+    url: qdrantUrl,
     collectionName: 'traderagent',
     vectorSize: 1536,
   })
-  embedder = new Embedder({ apiKey: process.env['OPENAI_API_KEY']! })
+  embedder = new Embedder({ apiKey: openaiKey })
 } else if (ragMode === 'memory') {
   vectorStore = new InMemoryVectorStore()
   embedder = new OllamaEmbedder({ model: 'nomic-embed-text' })
@@ -102,14 +110,16 @@ const rawBars = Array.isArray(ohlcvResult.data)
   : (ohlcvResult.data as { quotes?: unknown[] }).quotes ?? []
 
 type RawBar = Record<string, unknown>
-const ohlcvBars = (rawBars as RawBar[]).map((bar) => ({
-  date: String(bar.date ?? bar.Date ?? ''),
-  open: Number(bar.open ?? bar.Open ?? 0),
-  high: Number(bar.high ?? bar.High ?? 0),
-  low: Number(bar.low ?? bar.Low ?? 0),
-  close: Number(bar.close ?? bar.Close ?? bar.adjClose ?? 0),
-  volume: Number(bar.volume ?? bar.Volume ?? 0),
-}))
+const ohlcvBars = (rawBars as RawBar[])
+  .map((bar) => ({
+    date: String(bar.date ?? bar.Date ?? ''),
+    open: Number(bar.open ?? bar.Open ?? 0),
+    high: Number(bar.high ?? bar.High ?? 0),
+    low: Number(bar.low ?? bar.Low ?? 0),
+    close: Number(bar.close ?? bar.Close ?? bar.adjClose ?? 0),
+    volume: Number(bar.volume ?? bar.Volume ?? 0),
+  }))
+  .filter((bar) => bar.date !== '' && !Number.isNaN(bar.close) && bar.close > 0)
 
 if (ohlcvBars.length < 30) {
   console.error('Not enough OHLCV data for training. Need at least 30 bars.')
