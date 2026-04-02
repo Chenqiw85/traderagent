@@ -42,6 +42,7 @@ export class DataFetcher implements IAgent {
 
   async run(report: TradingReport): Promise<TradingReport> {
     const { ticker, market } = report
+    const asOf = report.timestamp
 
     // 1. Fetch from all data sources in parallel
     const dataTypes: DataType[] = ['ohlcv', 'news', 'fundamentals', 'technicals']
@@ -49,7 +50,14 @@ export class DataFetcher implements IAgent {
 
     for (const source of this.dataSources) {
       for (const type of dataTypes) {
-        const query: DataQuery = { ticker, market, type }
+        const lookbackDays = type === 'news' ? 7 : 365
+        const query: DataQuery = {
+          ticker,
+          market,
+          type,
+          from: new Date(asOf.getTime() - lookbackDays * 24 * 60 * 60 * 1000),
+          to: asOf,
+        }
         fetchPromises.push(
           source.fetch(query).catch((err) => {
             console.warn(`[DataFetcher] ${source.name}/${type} failed: ${(err as Error).message}`)

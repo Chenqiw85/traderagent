@@ -59,7 +59,9 @@ export class Backtester {
 
       let report
       try {
-        report = await this.orchestrator.run(this.ticker, this.market)
+        report = await this.orchestrator.run(this.ticker, this.market, {
+          timestamp: barDate,
+        })
       } catch {
         continue
       }

@@ -118,4 +118,34 @@ describe('TraderAgent', () => {
 
     expect(results).toHaveLength(2)
   })
+
+  it('extracts lessons from train decisions only', async () => {
+    const lessonLLM = mockLLM('[]')
+    const trader = new TraderAgent({
+      orchestratorFactory: () => makeOrchestrator(),
+      lessonLLM,
+      ohlcvBars: Array.from({ length: 50 }, (_, i) => ({
+        date: new Date(2025, 0, i + 1).toISOString(),
+        open: 100 + i,
+        high: 101 + i,
+        low: 99 + i,
+        close: 100 + i,
+        volume: 1000000,
+      })),
+    })
+
+    await trader.train({
+      ticker: 'AAPL',
+      market: 'US',
+      maxPasses: 1,
+      lookbackMonths: 12,
+      evaluationDays: 5,
+      earlyStopThreshold: 0.5,
+      earlyStopPatience: 2,
+    })
+
+    const prompt = vi.mocked(lessonLLM.chat).mock.calls[0]?.[0]?.[0]?.content ?? ''
+    expect(prompt).toContain('Summary: 35 decisions')
+    expect(prompt).not.toContain('Summary: 45 decisions')
+  })
 })

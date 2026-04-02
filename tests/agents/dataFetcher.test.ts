@@ -122,4 +122,29 @@ describe('DataFetcher', () => {
     const result = await fetcher.run(report)
     expect(result.rawData.length).toBe(5) // 1 existing + 4 new
   })
+
+  it('forwards report timestamp as the fetch upper bound', async () => {
+    const source = createMockDataSource('timed')
+    const fetcher = new DataFetcher({ dataSources: [source] })
+    const asOf = new Date('2025-06-10T00:00:00.000Z')
+    const report: TradingReport = {
+      ticker: 'AAPL',
+      market: 'US',
+      timestamp: asOf,
+      rawData: [],
+      researchFindings: [],
+    }
+
+    await fetcher.run(report)
+
+    const calls = (source.fetch as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls).toHaveLength(4)
+    for (const [query] of calls) {
+      expect(query).toEqual(expect.objectContaining({
+        ticker: 'AAPL',
+        market: 'US',
+        to: asOf,
+      }))
+    }
+  })
 })

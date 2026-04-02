@@ -137,9 +137,12 @@ export abstract class BaseResearcher implements IAgent {
     if (!this.vectorStore || !this.embedder) return ''
     const query = this.buildQuery(report)
     const embedding = await this.embedder.embed(query)
-    const marketDocs = await this.vectorStore.search(embedding, this.topK, {
+    const rawMarketDocs = await this.vectorStore.search(embedding, this.topK + 5, {
       must: [{ ticker: report.ticker }],
     })
+    const marketDocs = rawMarketDocs
+      .filter((doc) => doc.metadata?.['type'] !== 'lesson')
+      .slice(0, this.topK)
     const lessonDocs = await this.vectorStore.search(embedding, 3, {
       must: [{ ticker: report.ticker }, { type: 'lesson' }],
     })

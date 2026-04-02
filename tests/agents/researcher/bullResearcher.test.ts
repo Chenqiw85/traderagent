@@ -104,4 +104,30 @@ describe('BullResearcher', () => {
       'vectorStore and embedder must both be provided or both omitted'
     )
   })
+
+  it('keeps lesson documents out of the generic market-doc budget', async () => {
+    const llm = mockLLM('{"stance":"bull","evidence":["test"],"confidence":0.7}')
+    const vs: IVectorStore = {
+      upsert: vi.fn(),
+      search: vi.fn()
+        .mockResolvedValueOnce([
+          { id: 'l1', content: 'Lesson A', metadata: { ticker: 'AAPL', type: 'lesson' } },
+          { id: 'l2', content: 'Lesson B', metadata: { ticker: 'AAPL', type: 'lesson' } },
+          { id: 'm1', content: 'Market Doc 1', metadata: { ticker: 'AAPL', type: 'news' } },
+          { id: 'm2', content: 'Market Doc 2', metadata: { ticker: 'AAPL', type: 'ohlcv' } },
+        ])
+        .mockResolvedValueOnce([
+          { id: 'l1', content: 'Lesson A', metadata: { ticker: 'AAPL', type: 'lesson' } },
+        ]),
+      delete: vi.fn(),
+    }
+    const embedder = mockEmbedder()
+    const agent = new BullResearcher({ llm, vectorStore: vs, embedder, topK: 2 })
+
+    await agent.run(emptyReport())
+
+    const systemPrompt = vi.mocked(llm.chat).mock.calls[0]?.[0]?.[0]?.content ?? ''
+    expect(systemPrompt).toContain('Market Doc 1')
+    expect(systemPrompt).not.toMatch(/Lesson A[\s\S]*Lesson A/)
+  })
 })

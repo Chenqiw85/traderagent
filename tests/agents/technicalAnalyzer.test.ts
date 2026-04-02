@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { TechnicalAnalyzer } from '../../src/agents/analyzer/TechnicalAnalyzer.js'
 import type { IDataSource } from '../../src/data/IDataSource.js'
 import type { DataResult, TradingReport } from '../../src/agents/base/types.js'
@@ -72,5 +72,29 @@ describe('TechnicalAnalyzer', () => {
     const analyzer = new TechnicalAnalyzer({ dataSource: spySource })
     const report = await analyzer.run(makeReport(makeOHLCV(250)))
     expect(report.computedIndicators!.fundamentals.pe).not.toBeNull()
+  })
+
+  it('uses report timestamp when fetching benchmark market data', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ticker: 'SPY',
+      market: 'US',
+      type: 'ohlcv',
+      data: makeOHLCV(250),
+      fetchedAt: new Date('2025-06-10T00:00:00.000Z'),
+    } satisfies DataResult)
+    const analyzer = new TechnicalAnalyzer({ dataSource: { name: 'spy', fetch } })
+    const asOf = new Date('2025-06-10T00:00:00.000Z')
+
+    await analyzer.run({
+      ...makeReport(makeOHLCV(250)),
+      timestamp: asOf,
+    })
+
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({
+      ticker: 'SPY',
+      market: 'US',
+      type: 'ohlcv',
+      to: asOf,
+    }))
   })
 })

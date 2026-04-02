@@ -63,7 +63,7 @@ export class TraderAgent {
       const testDecisions = await backtester.replay(windows.test.start, windows.test.end)
 
       const extractedLessons = await this.lessonExtractor.extract({
-        decisions: [...trainDecisions, ...testDecisions],
+        decisions: trainDecisions,
         ticker: config.ticker,
         market: config.market,
         passNumber,

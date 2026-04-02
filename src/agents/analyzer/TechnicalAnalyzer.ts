@@ -37,7 +37,13 @@ export class TechnicalAnalyzer implements IAgent {
 
     let marketReturns: number[] = []
     try {
-      const spyResult = await this.dataSource.fetch({ ticker: 'SPY', market: report.market, type: 'ohlcv', from: new Date(Date.now() - 365 * 86400000) })
+      const spyResult = await this.dataSource.fetch({
+        ticker: 'SPY',
+        market: report.market,
+        type: 'ohlcv',
+        from: new Date(report.timestamp.getTime() - 365 * 86400000),
+        to: report.timestamp,
+      })
       const spyBars = this.parseBars(spyResult.data)
       marketReturns = this.calcReturns(spyBars.map((b) => b.close))
     } catch { console.warn('[TechnicalAnalyzer] Could not fetch SPY for beta — using beta=1') }

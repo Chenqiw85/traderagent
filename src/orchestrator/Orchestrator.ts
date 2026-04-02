@@ -9,6 +9,10 @@ type OrchestratorConfig = {
   manager: IAgent
 }
 
+type RunContext = {
+  timestamp?: Date
+}
+
 export class Orchestrator {
   private dataFetcher?: IAgent
   private technicalAnalyzer?: IAgent
@@ -24,11 +28,11 @@ export class Orchestrator {
     this.manager = config.manager
   }
 
-  async run(ticker: string, market: Market): Promise<TradingReport> {
+  async run(ticker: string, market: Market, context: RunContext = {}): Promise<TradingReport> {
     let report: TradingReport = {
       ticker,
       market,
-      timestamp: new Date(),
+      timestamp: context.timestamp ?? new Date(),
       rawData: [],
       researchFindings: [],
     }
