@@ -28,6 +28,9 @@ export const agentConfig: AgentConfigMap = {
   traderPipelineRiskMgr:      { llm: 'ollama', model: 'llama3.1' },
   traderPipelineManager:      { llm: 'ollama', model: 'llama3.1' },
   traderLessonExtractor:      { llm: 'ollama', model: 'llama3.1' },
+  // Advisor pipeline — reasoner for synthesis quality
+  advisor:              { llm: 'deepseek', model: 'deepseek-reasoner' },
+  marketTrendAnalyzer:  { llm: 'deepseek', model: 'deepseek-chat' },
 }
 
 export const dataSourceConfig = {

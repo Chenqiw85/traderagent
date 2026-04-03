@@ -33,21 +33,21 @@ TraderAgent Project Guide
 
   Key Interfaces
 
-  ┌──────────────┬───────────────────────────┬─────────────────────────────────────────────┐
-  │  Interface   │           File            │                   Purpose                   │
-  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
-  │ IAgent       │ src/agents/base/IAgent.ts │ All agents implement run(report) → report   │
-  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
-  │ ILLMProvider │ src/llm/ILLMProvider.ts   │ LLM abstraction: chat(messages) → string    │
-  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
-  │ IDataSource  │ src/data/IDataSource.ts   │ Data abstraction: fetch(query) → DataResult │
-  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
-  │ IVectorStore │ src/rag/IVectorStore.ts   │ RAG storage: upsert, search, delete         │
-  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
-  │ IEmbedder    │ src/rag/IEmbedder.ts      │ Embedding: embed(text) → number[]           │
-  └──────────────┴───────────────────────────┴─────────────────────────────────────────────┘
+         ┌──────────────┬───────────────────────────┬─────────────────────────────────────────────┐
+         │  Interface   │           File            │                   Purpose                   │
+         ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+         │ IAgent       │ src/agents/base/IAgent.ts │ All agents implement run(report) → report   │
+         ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+         │ ILLMProvider │ src/llm/ILLMProvider.ts   │ LLM abstraction: chat(messages) → string    │
+         ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+         │ IDataSource  │ src/data/IDataSource.ts   │ Data abstraction: fetch(query) → DataResult │
+         ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+         │ IVectorStore │ src/rag/IVectorStore.ts   │ RAG storage: upsert, search, delete         │
+         ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+         │ IEmbedder    │ src/rag/IEmbedder.ts      │ Embedding: embed(text) → number[]           │
+         └──────────────┴───────────────────────────┴─────────────────────────────────────────────┘
 
-                                              Core Types
+                                             Core Types
 
   Defined in src/agents/base/types.ts:
   - TradingReport — the pipeline's shared state, flows through all agents

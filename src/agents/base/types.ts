@@ -1,6 +1,6 @@
 // src/agents/base/types.ts
 
-export type AgentRole = 'researcher' | 'risk' | 'manager' | 'data' | 'trader'
+export type AgentRole = 'researcher' | 'risk' | 'manager' | 'data' | 'trader' | 'advisor'
 
 export type Market = 'US' | 'CN' | 'HK'
 

@@ -10,5 +10,16 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  advisor:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://trader:${POSTGRES_PASSWORD:-tradersecret}@postgres:5432/traderagent
+      TZ: America/New_York
+
 volumes:
   pgdata:
