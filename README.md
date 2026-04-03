@@ -1,158 +1,196 @@
-# TradingAgent
+TraderAgent Project Guide
 
-A multi-agent trading suggestion platform built on RAG (Retrieval-Augmented Generation). Specialized agents collaborate to produce **BUY / SELL / HOLD** decisions with confidence scores and reasoning — grounded in real market data.
+  What This Is
 
----
+  A multi-agent trading analysis system that fetches market data, runs it through specialized AI agents (bull researcher, bear
+  researcher, news analyst, fundamentals analyst, risk team), and produces a final BUY/SELL/HOLD decision with confidence score, stop
+  loss, and take profit levels.
 
-## What it does
+  Architecture
 
-You give it a ticker and a market. A team of AI agents goes to work:
+                           ┌─────────────────┐
+                           │   Orchestrator   │  — 5-stage pipeline
+                           └────────┬────────┘
+             ┌──────────────────────┼──────────────────────┐
+             │                      │                      │
+      ┌──────┴──────┐     ┌────────┴────────┐    ┌────────┴────────┐
+      │ Stage 1 + 2 │     │    Stage 3      │    │  Stage 4 + 5    │
+      │ DataFetcher  │     │ Researcher Team │    │ Risk + Manager  │
+      │ + Technical  │     │   (parallel)    │    │  (sequential)   │
+      │  Analyzer    │     │                 │    │                 │
+      └──────────────┘     └─────────────────┘    └─────────────────┘
 
-1. **DataFetcher** pulls market data, news, fundamentals, and technical indicators — embeds everything into a vector store
-2. **Researcher Team** (runs in parallel) — a Bull agent finds reasons to buy, a Bear agent finds reasons to sell, a News agent reads sentiment, a Fundamentals agent checks company health
-3. **Risk Team** (runs sequentially) — RiskAnalyst evaluates volatility, VaR, drawdown; RiskManager then sets position sizing and stop-loss levels based on that assessment
-4. **Manager** reads every agent's findings and makes the final call
+  Pipeline stages:
+  1. DataFetcher — pulls OHLCV, news, fundamentals from data sources; chunks + embeds into vector store
+  2. TechnicalAnalyzer — computes RSI, MACD, Bollinger, ATR, VaR, beta, etc. from raw OHLCV
+  3. Researcher Team (parallel) — 4 agents analyze data with different perspectives:
+    - BullResearcher — looks for bullish signals
+    - BearResearcher — looks for bearish signals
+    - NewsAnalyst — analyzes recent news sentiment
+    - FundamentalsAnalyst — evaluates PE, PB, EPS, etc.
+  4. Risk Team (sequential) — RiskAnalyst classifies risk level, RiskManager sets position limits
+  5. Manager — weighs all findings, produces final Decision (action, confidence, stopLoss, takeProfit)
 
-Every agent can use a **different LLM** (OpenAI, Anthropic, Gemini, Ollama, DeepSeek). Every data source and vector store is behind an interface, so you can swap them out without touching agent logic.
+  Key Interfaces
 
----
+  ┌──────────────┬───────────────────────────┬─────────────────────────────────────────────┐
+  │  Interface   │           File            │                   Purpose                   │
+  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+  │ IAgent       │ src/agents/base/IAgent.ts │ All agents implement run(report) → report   │
+  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+  │ ILLMProvider │ src/llm/ILLMProvider.ts   │ LLM abstraction: chat(messages) → string    │
+  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+  │ IDataSource  │ src/data/IDataSource.ts   │ Data abstraction: fetch(query) → DataResult │
+  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+  │ IVectorStore │ src/rag/IVectorStore.ts   │ RAG storage: upsert, search, delete         │
+  ├──────────────┼───────────────────────────┼─────────────────────────────────────────────┤
+  │ IEmbedder    │ src/rag/IEmbedder.ts      │ Embedding: embed(text) → number[]           │
+  └──────────────┴───────────────────────────┴─────────────────────────────────────────────┘
 
-## Architecture
+                                              Core Types
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  LLM Layer        ILLMProvider                              │
-│                   OpenAI · Anthropic · Gemini               │
-│                   Ollama · DeepSeek                         │
-├─────────────────────────────────────────────────────────────┤
-│  Data Layer       IDataSource                               │
-│  (Plan 2)         yfinance · Polygon · NewsAPI · SEC EDGAR  │
-│                   Tushare · AkShare (CN/HK markets)         │
-├─────────────────────────────────────────────────────────────┤
-│  RAG Layer        IVectorStore → Qdrant                     │
-│  (Plan 2)         Embedder → chunk · embed · store          │
-├─────────────────────────────────────────────────────────────┤
-│  Agent Layer      (Plan 3)                                  │
-│                                                             │
-│  ① DataFetcher                                              │
-│  ② Researcher Team ──────────────────────┐                 │
-│     BullResearcher  BearResearcher        │                 │
-│     NewsAnalyst     FundamentalsAnalyst   ├─► TradingReport │
-│  ③ Risk Team ────────────────────────────┤                 │
-│     RiskAnalyst     RiskManager           │                 │
-│  ④ Manager ──────────────────────────────┘                 │
-│     → Decision { BUY|SELL|HOLD, confidence, reasoning }    │
-├─────────────────────────────────────────────────────────────┤
-│  Evaluation       IEvaluator (Plan 3)                       │
-│                   Reasoning · Accuracy · Backtest           │
-└─────────────────────────────────────────────────────────────┘
-```
+  Defined in src/agents/base/types.ts:
+  - TradingReport — the pipeline's shared state, flows through all agents
+  - Decision — final output: action (BUY/SELL/HOLD), confidence, reasoning, stopLoss, takeProfit
+  - Finding — each researcher's output: stance, evidence, confidence
+  - RiskAssessment — risk level + metrics (VaR, volatility, beta, maxDrawdown)
+  - Market — 'US' | 'CN' | 'HK'
 
-Agents communicate through a **shared `TradingReport`** (blackboard pattern). Each agent reads the current state, appends its findings, and passes it on.
+  LLM Configuration
 
----
+  src/config/config.ts maps agent names to LLM providers:
 
-## Current status
+  ┌──────────────────┬──────────┬───────────────────┬──────────────────────────────────────────────┐
+  │   Agent Group    │ Provider │       Model       │                  Rationale                   │
+  ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
+  │ Research team    │ DeepSeek │ deepseek-chat     │ Fast, cost-effective for evidence gathering  │
+  ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
+  │ Risk + Manager   │ DeepSeek │ deepseek-reasoner │ Deep chain-of-thought for critical decisions │
+  ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
+  │ Trainer pipeline │ Ollama   │ llama3.1          │ Local, free for iterative backtesting        │
+  └──────────────────┴──────────┴───────────────────┴──────────────────────────────────────────────┘
 
-| Plan | What | Status |
-|------|------|--------|
-| Plan 1 — Foundation | TypeScript setup, all domain types, LLM adapters (5 providers), LLMRegistry, config | ✅ Done |
-| Plan 2 — Data & RAG | Data source adapters (US + CN), Qdrant vector store, embedder, DataFetcher | ✅ Done |
-| Plan 3 — Agents & Evaluation | All 7 agents, Orchestrator, 3 evaluators | ✅ Done |
+  Supported providers: OpenAI, Anthropic, Gemini, Ollama, DeepSeek (src/llm/registry.ts)
 
----
+  Data Sources
 
-## Supported markets
+  - PostgresDataSource — local DB cache (Prisma + PostgreSQL)
+  - FinnhubSource — Finnhub API (requires FINNHUB_API_KEY)
+  - YFinanceSource — Yahoo Finance (no key needed, always available)
+  - FallbackDataSource — tries sources in order, first success wins
+  - RateLimitedDataSource — wraps any source with per-source rate limiting + 429 retry
 
-- **US Equities** — NYSE, NASDAQ
-- **Chinese A-shares** — Shanghai, Shenzhen
-- **Hong Kong** — HKEX
+  RAG System
 
----
+  Auto-detected via detectRAGMode():
+  - qdrant mode: Qdrant vector DB + OpenAI embeddings (needs QDRANT_URL + OPENAI_API_KEY)
+  - memory mode: In-memory vector store + Ollama embeddings (needs OLLAMA_HOST)
+  - disabled: no RAG, agents work without context retrieval
 
-## Quick start
+  RAG stores chunked market data and learned lessons from the trader training loop.
 
-```bash
-# Clone and install
-git clone <repo>
-cd traderagent
-npm install
+  Trader Training System
 
-# Run tests
-npm test
+  The newest module (src/agents/trader/). A backtesting + lesson extraction loop:
 
-# Type check
-npm run typecheck
-```
+  ┌──────────┐     ┌────────────┐     ┌──────────────────┐     ┌─────────────────┐
+  │ TraderAgent│────▶│ Backtester  │────▶│ CompositeScorer   │────▶│ LessonExtractor  │
+  │  .train() │     │  .replay()  │     │  .score()         │     │  .extract()      │
+  └──────────┘     └────────────┘     └──────────────────┘     └────────┬────────┘
+                                                                        │
+                                                                ┌───────▼────────┐
+                                                                │ LessonsJournal  │
+                                                                │  → vector store │
+                                                                └────────────────┘
 
-### Environment variables
+  1. Splits OHLCV data into 70% train / 30% test windows
+  2. Replays each bar through the full orchestrator pipeline
+  3. Scores decisions with CompositeScorer (directional accuracy 30%, target hit 30%, calibration 25%, hold penalty 15%)                  4. LessonExtractor uses LLM to analyze patterns in scored decisions
+  5. Lessons stored in vector store via LessonsJournal, fed back to researchers + manager on next pass
+  6. Early stopping when test score stagnates
 
-Copy `.env.example` to `.env` and fill in the keys for the providers you want to use:
+  Database Schema
 
-```bash
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GEMINI_API_KEY=AIza...
-DEEPSEEK_API_KEY=sk-...
-OLLAMA_HOST=http://localhost:11434   # optional, defaults to localhost
-```
+  PostgreSQL via Prisma (prisma/schema.prisma):
+  - Watchlist — tracked tickers
+  - Ohlcv — cached price data
+  - Fundamentals, News, Technicals — cached research data
+  - FetchLog — data source fetch audit trail
+  - BacktestRun, BacktestDecision, Lesson — trader training results
 
-You only need keys for the providers you actually use. See `src/config/config.ts` to change which LLM each agent uses.
+  CLI Commands
 
----
+  ┌──────────────────────────────────────────────────────────┬─────────────────────────────────────────┐
+  │                         Command                          │              What it does               │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ npm run run:analyze -- AAPL US                           │ Run full analysis pipeline for a ticker │
+  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤                                  │ npm run trader:train -- AAPL US --passes 4 --lookback 12 │ Train trader with backtesting loop      │
+  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ npm run watchlist:add -- AAPL US                         │ Add ticker to watchlist                 │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ npm run watchlist:list                                   │ Show watchlist                          │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤                                  │ npm run db:sync -- AAPL US                               │ Sync market data to Postgres            │
+  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ npm run scheduler:start                                  │ Start cron-based auto-sync              │
+  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ npm run test                                             │ Run all tests                           │
+  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ npm run typecheck                                        │ TypeScript type check                   │
+  └──────────────────────────────────────────────────────────┴─────────────────────────────────────────┘
 
-## Configuring agents
+  Environment Variables
 
-Each agent can use a different LLM. Edit `src/config/config.ts`:
+  # Required for production analysis
+  DEEPSEEK_API_KEY=...          # Research + risk + manager agents
 
-```ts
-export const agentConfig = {
-  bullResearcher:      { llm: 'openai',    model: 'gpt-4o' },
-  bearResearcher:      { llm: 'anthropic', model: 'claude-sonnet-4-6' },
-  newsAnalyst:         { llm: 'gemini',    model: 'gemini-2.0-flash' },
-  fundamentalsAnalyst: { llm: 'deepseek',  model: 'deepseek-chat' },
-  riskAnalyst:         { llm: 'gemini',    model: 'gemini-2.0-flash' },
-  riskManager:         { llm: 'openai',    model: 'gpt-4o-mini' },
-  manager:             { llm: 'openai',    model: 'o3-mini' },
-}
-```
+  # Optional — data sources
+  DATABASE_URL=...              # PostgreSQL (docker-compose provides one)
+  FINNHUB_API_KEY=...           # Finnhub market data
 
----
+  # Optional — RAG (pick one pair)
+  QDRANT_URL=... + OPENAI_API_KEY=...   # Full RAG mode
+  OLLAMA_HOST=http://localhost:11434    # Local RAG mode
 
-## Project structure
+  # Optional — alternative LLMs
+  ANTHROPIC_API_KEY=...
+  GEMINI_API_KEY=...
 
-```
-src/
-├── llm/                  LLM provider layer (ILLMProvider, 5 adapters, registry)
-├── agents/
-│   ├── base/             Shared domain types (TradingReport, Finding, Decision, …)
-│   ├── researcher/       BaseResearcher, Bull, Bear, News, Fundamentals
-│   ├── risk/             RiskAnalyst, RiskManager
-│   └── manager/          Manager — final BUY/SELL/HOLD decision
-├── data/                 IDataSource interface + US/CN/HK adapters
-├── rag/                  IVectorStore, QdrantVectorStore, Embedder, chunker
-├── orchestrator/         Orchestrator — wires all agents into the pipeline
-├── evaluation/           IEvaluator, ReasoningEvaluator, AccuracyEvaluator, BacktestEvaluator
-├── utils/                parseJson — strips markdown fences before JSON.parse
-└── config/               Agent-to-LLM mapping
-```
+  Quick Start
 
----
+  # 1. Start Postgres
+  docker compose up -d
 
-## Docs
+  # 2. Set up env
+  cp .env.example .env  # fill in DEEPSEEK_API_KEY at minimum
 
-- [Design spec](docs/superpowers/specs/2026-03-25-traderagent-design.md) — full architecture decisions
-- [Developer guide](docs/GUIDE.md) — how things work, how to extend
-- [Plan 1 — Foundation](docs/superpowers/plans/2026-03-25-foundation.md)
-- [Plan 2 — Data & RAG](docs/superpowers/plans/2026-03-25-data-and-rag.md)
-- [Plan 3 — Agents & Evaluation](docs/superpowers/plans/2026-03-25-agents-and-evaluation.md)
+  # 3. Database
+  npm run db:generate
+  npm run db:migrate
 
----
+  # 4. Run analysis
+  npm run run:analyze -- AAPL US
 
-## Tech stack
+  # 5. Train trader (optional — needs Ollama running)
+  npm run trader:train -- AAPL US
 
-- **Language:** TypeScript 5.4, ESM
-- **Testing:** Vitest
-- **LLM SDKs:** openai, @anthropic-ai/sdk, @google/generative-ai, ollama
-- **Vector store:** Qdrant (`@qdrant/js-client-rest`)
-- **Market data:** yfinance, Polygon.io, Tushare, AkShare
+  Project Structure
+
+  src/                                                                                                                                    ├── agents/
+  │   ├── base/           IAgent, types (TradingReport, Decision, Finding...)
+  │   ├── data/           DataFetcher (stage 1)
+  │   ├── analyzer/       TechnicalAnalyzer (stage 2)
+  │   ├── researcher/     BaseResearcher, Bull/Bear/News/Fundamentals (stage 3)
+  │   ├── risk/           RiskAnalyst, RiskManager (stage 4)
+  │   ├── manager/        Manager (stage 5)
+  │   └── trader/         TraderAgent, Backtester, CompositeScorer, LessonExtractor, LessonsJournal
+  ├── cli/                Entry points: run, train, sync, watchlist, scheduler
+  ├── config/             Agent LLM config, rate limit config
+  ├── data/               Data source implementations (Finnhub, YFinance, Polygon, etc.)
+  ├── db/                 Prisma client, PostgresDataSource
+  ├── evaluation/         Accuracy/Backtest/Reasoning evaluators
+  ├── indicators/         Technical indicator calculations (RSI, MACD, Bollinger, etc.)
+  ├── llm/                LLM providers (OpenAI, Anthropic, Gemini, Ollama, DeepSeek) + registry
+  ├── orchestrator/       Orchestrator (wires the 5-stage pipeline)
+  ├── rag/                Vector store (Qdrant, InMemory), embedders, chunker
+  ├── sync/               DataSyncService, Scheduler
+  └── utils/              parseJson
+  tests/
+  ├── agents/trader/      6 test files, 29 tests
+  └── agents/             DataFetcher, TechnicalAnalyzer, BullResearcher tests
