@@ -47,7 +47,9 @@ TraderAgent Project Guide
          │ IEmbedder    │ src/rag/IEmbedder.ts      │ Embedding: embed(text) → number[]           │
          └──────────────┴───────────────────────────┴─────────────────────────────────────────────┘
 
-                                             Core Types
+                                            
+
+  Core Types
 
   Defined in src/agents/base/types.ts:
   - TradingReport — the pipeline's shared state, flows through all agents
@@ -60,15 +62,15 @@ TraderAgent Project Guide
 
   src/config/config.ts maps agent names to LLM providers:
 
-  ┌──────────────────┬──────────┬───────────────────┬──────────────────────────────────────────────┐
-  │   Agent Group    │ Provider │       Model       │                  Rationale                   │
-  ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
-  │ Research team    │ DeepSeek │ deepseek-chat     │ Fast, cost-effective for evidence gathering  │
-  ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
-  │ Risk + Manager   │ DeepSeek │ deepseek-reasoner │ Deep chain-of-thought for critical decisions │
-  ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
-  │ Trainer pipeline │ Ollama   │ llama3.1          │ Local, free for iterative backtesting        │
-  └──────────────────┴──────────┴───────────────────┴──────────────────────────────────────────────┘
+       ┌──────────────────┬──────────┬───────────────────┬──────────────────────────────────────────────┐
+       │   Agent Group    │ Provider │       Model       │                  Rationale                   │
+       ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
+       │ Research team    │ DeepSeek │ deepseek-chat     │ Fast, cost-effective for evidence gathering  │
+       ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
+       │ Risk + Manager   │ DeepSeek │ deepseek-reasoner │ Deep chain-of-thought for critical decisions │
+       ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
+       │ Trainer pipeline │ Ollama   │ llama3.1          │ Local, free for iterative backtesting        │
+       └──────────────────┴──────────┴───────────────────┴──────────────────────────────────────────────┘
 
   Supported providers: OpenAI, Anthropic, Gemini, Ollama, DeepSeek (src/llm/registry.ts)
 
@@ -120,20 +122,22 @@ TraderAgent Project Guide
 
   CLI Commands
 
-  ┌──────────────────────────────────────────────────────────┬─────────────────────────────────────────┐
-  │                         Command                          │              What it does               │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-  │ npm run run:analyze -- AAPL US                           │ Run full analysis pipeline for a ticker │
-  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤                                  │ npm run trader:train -- AAPL US --passes 4 --lookback 12 │ Train trader with backtesting loop      │
-  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-  │ npm run watchlist:add -- AAPL US                         │ Add ticker to watchlist                 │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-  │ npm run watchlist:list                                   │ Show watchlist                          │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤                                  │ npm run db:sync -- AAPL US                               │ Sync market data to Postgres            │
-  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-  │ npm run scheduler:start                                  │ Start cron-based auto-sync              │
-  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-  │ npm run test                                             │ Run all tests                           │
-  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-  │ npm run typecheck                                        │ TypeScript type check                   │
-  └──────────────────────────────────────────────────────────┴─────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────────┬─────────────────────────────────────────┐
+        │                         Command                          │              What it does               │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run run:analyze -- AAPL US                           │ Run full analysis pipeline for a ticker │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤                                
+        │ npm run trader:train -- AAPL US --passes 4 --lookback 12 │ Train trader with backtesting loop      │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run watchlist:add -- AAPL US                         │ Add ticker to watchlist                 │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run watchlist:list                                   │ Show watchlist                          │                                  ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤                                  
+        │ npm run db:sync -- AAPL US                               │ Sync market data to Postgres            │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run scheduler:start                                  │ Start cron-based auto-sync              │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run test                                             │ Run all tests                           │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run typecheck                                        │ TypeScript type check                   │
+        └──────────────────────────────────────────────────────────┴─────────────────────────────────────────┘
 
   Environment Variables
 
@@ -172,25 +176,26 @@ TraderAgent Project Guide
 
   Project Structure
 
-  src/                                                                                                                                    ├── agents/
-  │   ├── base/           IAgent, types (TradingReport, Decision, Finding...)
-  │   ├── data/           DataFetcher (stage 1)
-  │   ├── analyzer/       TechnicalAnalyzer (stage 2)
-  │   ├── researcher/     BaseResearcher, Bull/Bear/News/Fundamentals (stage 3)
-  │   ├── risk/           RiskAnalyst, RiskManager (stage 4)
-  │   ├── manager/        Manager (stage 5)
-  │   └── trader/         TraderAgent, Backtester, CompositeScorer, LessonExtractor, LessonsJournal
-  ├── cli/                Entry points: run, train, sync, watchlist, scheduler
-  ├── config/             Agent LLM config, rate limit config
-  ├── data/               Data source implementations (Finnhub, YFinance, Polygon, etc.)
-  ├── db/                 Prisma client, PostgresDataSource
-  ├── evaluation/         Accuracy/Backtest/Reasoning evaluators
-  ├── indicators/         Technical indicator calculations (RSI, MACD, Bollinger, etc.)
-  ├── llm/                LLM providers (OpenAI, Anthropic, Gemini, Ollama, DeepSeek) + registry
-  ├── orchestrator/       Orchestrator (wires the 5-stage pipeline)
-  ├── rag/                Vector store (Qdrant, InMemory), embedders, chunker
-  ├── sync/               DataSyncService, Scheduler
-  └── utils/              parseJson
-  tests/
-  ├── agents/trader/      6 test files, 29 tests
-  └── agents/             DataFetcher, TechnicalAnalyzer, BullResearcher tests
+     src/                                                                                                                                    
+     ├── agents/
+     │   ├── base/           IAgent, types (TradingReport, Decision, Finding...)
+     │   ├── data/           DataFetcher (stage 1)
+     │   ├── analyzer/       TechnicalAnalyzer (stage 2)
+     │   ├── researcher/     BaseResearcher, Bull/Bear/News/Fundamentals (stage 3)
+     │   ├── risk/           RiskAnalyst, RiskManager (stage 4)
+     │   ├── manager/        Manager (stage 5)
+     │   └── trader/         TraderAgent, Backtester, CompositeScorer, LessonExtractor, LessonsJournal
+     ├── cli/                Entry points: run, train, sync, watchlist, scheduler
+     ├── config/             Agent LLM config, rate limit config
+     ├── data/               Data source implementations (Finnhub, YFinance, Polygon, etc.)
+     ├── db/                 Prisma client, PostgresDataSource
+     ├── evaluation/         Accuracy/Backtest/Reasoning evaluators
+     ├── indicators/         Technical indicator calculations (RSI, MACD, Bollinger, etc.)
+     ├── llm/                LLM providers (OpenAI, Anthropic, Gemini, Ollama, DeepSeek) + registry
+     ├── orchestrator/       Orchestrator (wires the 5-stage pipeline)
+     ├── rag/                Vector store (Qdrant, InMemory), embedders, chunker
+     ├── sync/               DataSyncService, Scheduler
+     └── utils/              parseJson
+     tests/
+     ├── agents/trader/      6 test files, 29 tests
+     └── agents/             DataFetcher, TechnicalAnalyzer, BullResearcher tests
