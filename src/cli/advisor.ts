@@ -41,6 +41,7 @@ import type { WatchlistEntry, IndexDef } from '../agents/advisor/types.js'
 // --- Parse CLI args ---
 const mode = process.argv[2]
 const isSchedule = mode === 'schedule'
+const isDryRun = process.argv.includes('--dry-run')
 
 // --- Data source setup (same as run.ts) ---
 const dataSources: IDataSource[] = []
@@ -96,12 +97,16 @@ function parseIndices(): readonly IndexDef[] {
   })
 }
 
-// --- WhatsApp sender (optional) ---
+// --- WhatsApp sender (optional, skipped in dry-run) ---
 let messageSender
-try {
-  messageSender = createTwilioSenderFromEnv()
-} catch {
-  console.log('[Advisor] Twilio not configured — reports will print to console only')
+if (isDryRun) {
+  console.log('[Advisor] Dry-run mode — WhatsApp disabled')
+} else {
+  try {
+    messageSender = createTwilioSenderFromEnv()
+  } catch {
+    console.log('[Advisor] Twilio not configured — reports will print to console only')
+  }
 }
 
 const whatsappTo = process.env['ADVISOR_WHATSAPP_TO']

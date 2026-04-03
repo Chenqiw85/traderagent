@@ -17,7 +17,8 @@
     "watchlist:remove": "tsx --env-file=.env src/cli/watchlist.ts remove",
     "watchlist:list": "tsx --env-file=.env src/cli/watchlist.ts list",
     "advisor": "tsx --env-file=.env src/cli/advisor.ts",
-    "advisor:schedule": "tsx --env-file=.env src/cli/advisor.ts schedule"
+    "advisor:schedule": "tsx --env-file=.env src/cli/advisor.ts schedule",
+    "test:whatsapp": "tsx --env-file=.env src/cli/test-whatsapp.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
