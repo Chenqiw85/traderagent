@@ -9,6 +9,7 @@ dist/
 *~
 yazi.toml
 CLAUDE.md 
+./claude 
 
 
 /generated/prisma
