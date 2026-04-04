@@ -1,6 +1,9 @@
 // src/config/config.ts
 
-export type LLMProviderName = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'deepseek'
+const usingLLM = 'siliconflow'
+const reacherModel = 'deepseek-ai/DeepSeek-V3'
+const RiskModel = 'deepseek-ai/DeepSeek-V3'
+export type LLMProviderName = 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'deepseek' | 'siliconflow'
 
 export type AgentLLMConfig = {
   llm: LLMProviderName
@@ -11,14 +14,14 @@ export type AgentConfigMap = Record<string, AgentLLMConfig>
 
 export const agentConfig: AgentConfigMap = {
   // Research team — deepseek-chat: fast, cost-effective for evidence gathering
-  bullResearcher:      { llm: 'deepseek', model: 'deepseek-chat' },
-  bearResearcher:      { llm: 'deepseek', model: 'deepseek-chat' },
-  newsAnalyst:         { llm: 'deepseek', model: 'deepseek-chat' },
-  fundamentalsAnalyst: { llm: 'deepseek', model: 'deepseek-chat' },
+  bullResearcher:      { llm: usingLLM, model: reacherModel },
+  bearResearcher:      { llm: usingLLM, model: reacherModel },
+  newsAnalyst:         { llm: usingLLM, model: reacherModel },
+  fundamentalsAnalyst: { llm: usingLLM, model: reacherModel },
   // Risk + decision team — deepseek-reasoner (R1): deep chain-of-thought for critical calls
-  riskAnalyst:         { llm: 'deepseek', model: 'deepseek-reasoner' },
-  riskManager:         { llm: 'deepseek', model: 'deepseek-reasoner' },
-  manager:             { llm: 'deepseek', model: 'deepseek-reasoner' },
+  riskAnalyst:         { llm: usingLLM, model: RiskModel },
+  riskManager:         { llm: usingLLM, model: RiskModel },
+  manager:             { llm: usingLLM, model: RiskModel },
   // Trader training pipeline — local Ollama defaults for iterative backtesting
   traderPipelineBull:         { llm: 'ollama', model: 'llama3.1' },
   traderPipelineBear:         { llm: 'ollama', model: 'llama3.1' },
@@ -29,8 +32,8 @@ export const agentConfig: AgentConfigMap = {
   traderPipelineManager:      { llm: 'ollama', model: 'llama3.1' },
   traderLessonExtractor:      { llm: 'ollama', model: 'llama3.1' },
   // Advisor pipeline — reasoner for synthesis quality
-  advisor:              { llm: 'deepseek', model: 'deepseek-reasoner' },
-  marketTrendAnalyzer:  { llm: 'deepseek', model: 'deepseek-chat' },
+  advisor:              { llm: usingLLM, model: RiskModel },
+  marketTrendAnalyzer:  { llm: usingLLM, model: reacherModel },
 }
 
 export type RAGMode = 'qdrant' | 'memory' | 'disabled'

@@ -6,6 +6,7 @@ import { AnthropicProvider } from './anthropic.js'
 import { GeminiProvider } from './gemini.js'
 import { OllamaProvider } from './ollama.js'
 import { DeepSeekProvider } from './deepseek.js'
+import { SiliconFlowProvider } from './siliconflow.js'
 
 export class LLMRegistry {
   private cache = new Map<string, ILLMProvider>()
@@ -41,6 +42,8 @@ export class LLMRegistry {
         return new OllamaProvider({ host: process.env['OLLAMA_HOST'] ?? 'http://localhost:11434', model })
       case 'deepseek':
         return new DeepSeekProvider({ apiKey: apiKey('DEEPSEEK_API_KEY'), model })
+      case 'siliconflow':
+        return new SiliconFlowProvider({ apiKey: apiKey('SILICONFLOW_API_KEY'), model })
       default:
         throw new Error(`Unknown LLM provider: ${llm}`)
     }
