@@ -32,7 +32,18 @@ export class OllamaProvider implements ILLMProvider {
   }
 
   async *chatStream(messages: Message[], options?: LLMOptions): AsyncIterable<string> {
-    const result = await this.chat(messages, options)
-    yield result
+    const response = await this.client.chat({
+      model: this.model,
+      messages,
+      stream: true,
+      options: {
+        temperature: options?.temperature,
+        num_predict: options?.maxTokens,
+        top_p: options?.topP,
+      },
+    })
+    for await (const chunk of response) {
+      yield chunk.message.content
+    }
   }
 }

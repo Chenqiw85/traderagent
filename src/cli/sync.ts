@@ -18,7 +18,13 @@ async function main() {
 
   if (tickerIdx !== -1 && args[tickerIdx + 1]) {
     const ticker = args[tickerIdx + 1]
-    const market = (args[tickerIdx + 2] ?? 'US') as Market
+    const marketRaw = args[tickerIdx + 2] ?? 'US'
+    const VALID_MARKETS = new Set(['US', 'CN', 'HK'])
+    if (!VALID_MARKETS.has(marketRaw.toUpperCase())) {
+      console.error(`Invalid market: "${marketRaw}". Must be one of: US, CN, HK`)
+      process.exit(1)
+    }
+    const market = marketRaw.toUpperCase() as Market
     console.log(`Syncing single ticker: ${ticker} (${market})`)
     await service.syncTicker(ticker, market)
   } else {

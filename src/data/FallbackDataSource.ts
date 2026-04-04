@@ -18,7 +18,7 @@ export class FallbackDataSource implements IDataSource {
         const result = await source.fetch(query)
         return result
       } catch (err) {
-        const message = (err as Error).message
+        const message = err instanceof Error ? err.message : String(err)
         console.warn(`[${this.name}] ${source.name}/${query.type} failed: ${message}`)
         errors.push({ source: source.name, error: message })
       }

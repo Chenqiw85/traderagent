@@ -1,5 +1,6 @@
 // src/rag/embedder.ts
 import OpenAI from 'openai'
+import type { IEmbedder } from './IEmbedder.js'
 
 type EmbedderConfig = {
   apiKey: string
@@ -11,7 +12,7 @@ type EmbedderConfig = {
  * Embedder — wraps OpenAI-compatible embedding endpoints.
  * Produces vector embeddings for text chunks.
  */
-export class Embedder {
+export class Embedder implements IEmbedder {
   private client: OpenAI
   private model: string
 

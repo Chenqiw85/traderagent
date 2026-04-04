@@ -66,7 +66,7 @@ export class DataSyncService {
           await this.logFetch(ticker, market, dataType, source.name, 'success', null, Date.now() - start)
           return // success
         } catch (err) {
-          lastError = err as Error
+          lastError = err instanceof Error ? err : new Error(String(err))
 
           if (RateLimitError.isRateLimitError(err)) {
             rateLimitRetries++
@@ -120,14 +120,14 @@ export class DataSyncService {
           data: bars.map((bar: Record<string, unknown>) => ({
             ticker,
             market,
-            date: new Date(bar.date as string),
+            date: bar.date ? new Date(bar.date as string) : new Date(),
             open: Number(bar.open),
             high: Number(bar.high),
             low: Number(bar.low),
             close: Number(bar.close),
             volume: BigInt(Math.round(Number(bar.volume))),
             source,
-          })),
+          })).filter((row) => !isNaN(row.date.getTime())),
           skipDuplicates: true,
         })
         break
@@ -164,14 +164,14 @@ export class DataSyncService {
           data: bars.map((bar: Record<string, unknown>) => ({
             ticker,
             market,
-            date: new Date(bar.date as string),
+            date: bar.date ? new Date(bar.date as string) : new Date(),
             open: Number(bar.open),
             high: Number(bar.high),
             low: Number(bar.low),
             close: Number(bar.close),
             volume: BigInt(Math.round(Number(bar.volume))),
             source,
-          })),
+          })).filter((row) => !isNaN(row.date.getTime())),
           skipDuplicates: true,
         })
         break

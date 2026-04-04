@@ -30,9 +30,11 @@ export class NewsAPISource implements IDataSource {
     const fromStr = from.toISOString().slice(0, 10)
     const toStr = to.toISOString().slice(0, 10)
 
-    const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query.ticker)}&from=${fromStr}&to=${toStr}&sortBy=relevancy&pageSize=20&apiKey=${this.apiKey}`
+    const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query.ticker)}&from=${fromStr}&to=${toStr}&sortBy=relevancy&pageSize=20`
 
-    const response = await fetch(url)
+    const response = await fetch(url, {
+      headers: { 'X-Api-Key': this.apiKey },
+    })
     if (!response.ok) {
       if (response.status === 429) {
         const retryAfter = response.headers.get('retry-after')

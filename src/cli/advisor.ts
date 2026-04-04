@@ -19,6 +19,7 @@ import { RiskManager } from '../agents/risk/RiskManager.js'
 import { Manager } from '../agents/manager/Manager.js'
 import { LLMRegistry } from '../llm/registry.js'
 import { TokenProfiler } from '../llm/TokenProfiler.js'
+import { RetryLLMProvider } from '../llm/withRetry.js'
 import { FinnhubSource } from '../data/finnhub.js'
 import { YFinanceSource } from '../data/yfinance.js'
 import { FallbackDataSource } from '../data/FallbackDataSource.js'
@@ -29,7 +30,7 @@ import { QdrantVectorStore } from '../rag/qdrant.js'
 import { InMemoryVectorStore } from '../rag/InMemoryVectorStore.js'
 import { Embedder } from '../rag/embedder.js'
 import { OllamaEmbedder } from '../rag/OllamaEmbedder.js'
-import { agentConfig, detectRAGMode } from '../config/config.js'
+import { agentConfig, detectRAGMode, getEmbeddingDimension } from '../config/config.js'
 import { createTwilioSenderFromEnv } from '../messaging/TwilioWhatsAppSender.js'
 import { listTickers } from '../sync/watchlist.js'
 import type { IDataSource } from '../data/IDataSource.js'
@@ -37,6 +38,8 @@ import type { IVectorStore } from '../rag/IVectorStore.js'
 import type { IEmbedder } from '../rag/IEmbedder.js'
 import type { Market } from '../agents/base/types.js'
 import type { WatchlistEntry, IndexDef } from '../agents/advisor/types.js'
+import { validateTicker, validateMarket } from '../utils/validation.js'
+import { getErrorMessage } from '../utils/errors.js'
 
 // --- Parse CLI args ---
 const mode = process.argv[2]
@@ -56,8 +59,19 @@ let vectorStore: IVectorStore | undefined
 let embedder: IEmbedder | undefined
 
 if (ragMode === 'qdrant') {
-  vectorStore = new QdrantVectorStore({ url: process.env['QDRANT_URL']!, collectionName: 'traderagent', vectorSize: 1536 })
-  embedder = new Embedder({ apiKey: process.env['OPENAI_API_KEY']! })
+  const qdrantUrl = process.env['QDRANT_URL']
+  const openaiKey = process.env['OPENAI_API_KEY']
+  if (!qdrantUrl || !openaiKey) {
+    throw new Error('QDRANT_URL and OPENAI_API_KEY are required for qdrant RAG mode')
+  }
+  const embeddingModel = 'text-embedding-3-small'
+  vectorStore = new QdrantVectorStore({
+    url: qdrantUrl,
+    apiKey: process.env['QDRANT_API_KEY'],
+    collectionName: 'traderagent',
+    vectorSize: getEmbeddingDimension(embeddingModel),
+  })
+  embedder = new Embedder({ apiKey: openaiKey, model: embeddingModel })
 } else if (ragMode === 'memory') {
   vectorStore = new InMemoryVectorStore()
   embedder = new OllamaEmbedder({ model: 'nomic-embed-text' })
@@ -65,7 +79,7 @@ if (ragMode === 'qdrant') {
 
 // --- LLM registry ---
 const registry = new LLMRegistry(agentConfig)
-const wrap = (agent: string) => new TokenProfiler(registry.get(agent), agent)
+const wrap = (agent: string) => new TokenProfiler(new RetryLLMProvider(registry.get(agent)), agent)
 const researcherConfig = { vectorStore, embedder }
 
 // --- Build Orchestrator (same pipeline as run.ts) ---
@@ -139,9 +153,10 @@ if (isSchedule) {
   const getWatchlist = async (): Promise<WatchlistEntry[]> => {
     // If tickers provided via CLI args
     const tickerArg = process.argv[2]
-    const marketArg = (process.argv[3] as Market) ?? 'US'
+    const marketArg = process.argv[3] ?? 'US'
     if (tickerArg && tickerArg !== 'schedule') {
-      return tickerArg.split(',').map((t) => ({ ticker: t.trim(), market: marketArg }))
+      const market = validateMarket(marketArg)
+      return tickerArg.split(',').map((t) => ({ ticker: validateTicker(t), market }))
     }
     // Otherwise read from DB watchlist
     const tickers = await listTickers()
@@ -167,7 +182,7 @@ if (isSchedule) {
     TokenProfiler.printSummary()
   } catch (err) {
     TokenProfiler.printSummary()
-    console.error(`\n[Advisor] FAILED: ${(err as Error).message}`)
+    console.error(`\n[Advisor] FAILED: ${getErrorMessage(err)}`)
     process.exit(1)
   }
 }

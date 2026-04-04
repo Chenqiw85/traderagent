@@ -8,8 +8,7 @@ import {
   calcRSI,
 } from '../../indicators/index.js'
 import { parseJson } from '../../utils/parseJson.js'
-
-type OHLCVBar = { open: number; high: number; low: number; close: number; volume: number }
+import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
 
 type MarketTrendAnalyzerConfig = {
   readonly llm: ILLMProvider
@@ -33,7 +32,8 @@ export class MarketTrendAnalyzer {
         const trend = await this.analyzeIndex(index)
         trends.push(trend)
       } catch (err) {
-        console.warn(`[MarketTrendAnalyzer] Failed to analyze ${index.ticker}: ${(err as Error).message}`)
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[MarketTrendAnalyzer] Failed to analyze ${index.ticker}: ${msg}`)
       }
     }
 
@@ -119,32 +119,7 @@ export class MarketTrendAnalyzer {
     return 'neutral'
   }
 
-  private parseBars(data: unknown): OHLCVBar[] {
-    if (Array.isArray(data)) {
-      return data.map((bar: Record<string, unknown>) => ({
-        open: Number(bar.open ?? bar.Open),
-        high: Number(bar.high ?? bar.High),
-        low: Number(bar.low ?? bar.Low),
-        close: Number(bar.close ?? bar.Close ?? bar.adjClose),
-        volume: Number(bar.volume ?? bar.Volume),
-      }))
-    }
-    if (data && typeof data === 'object') {
-      const d = data as Record<string, unknown>
-      if (Array.isArray(d.quotes)) {
-        return (d.quotes as Record<string, unknown>[]).map((bar) => ({
-          open: Number(bar.open ?? bar.Open),
-          high: Number(bar.high ?? bar.High),
-          low: Number(bar.low ?? bar.Low),
-          close: Number(bar.close ?? bar.Close ?? bar.adjClose),
-          volume: Number(bar.volume ?? bar.Volume),
-        }))
-      }
-      if (d.s === 'ok' && Array.isArray(d.c)) {
-        const c = d.c as number[], o = d.o as number[], h = d.h as number[], l = d.l as number[], v = d.v as number[]
-        return c.map((_, i) => ({ open: o[i], high: h[i], low: l[i], close: c[i], volume: v[i] }))
-      }
-    }
-    return []
+  private parseBars(data: unknown) {
+    return normalizeOhlcv(data)
   }
 }

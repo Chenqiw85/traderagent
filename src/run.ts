@@ -13,6 +13,7 @@ import { RiskManager } from './agents/risk/RiskManager.js'
 import { Manager } from './agents/manager/Manager.js'
 import { LLMRegistry } from './llm/registry.js'
 import { TokenProfiler } from './llm/TokenProfiler.js'
+import { RetryLLMProvider } from './llm/withRetry.js'
 import { FinnhubSource } from './data/finnhub.js'
 import { YFinanceSource } from './data/yfinance.js'
 import { FallbackDataSource } from './data/FallbackDataSource.js'
@@ -23,9 +24,10 @@ import { QdrantVectorStore } from './rag/qdrant.js'
 import { InMemoryVectorStore } from './rag/InMemoryVectorStore.js'
 import { Embedder } from './rag/embedder.js'
 import { OllamaEmbedder } from './rag/OllamaEmbedder.js'
-import { agentConfig, detectRAGMode } from './config/config.js'
+import { agentConfig, detectRAGMode, getEmbeddingDimension } from './config/config.js'
 import type { Market } from './agents/base/types.js'
 import type { IDataSource } from './data/IDataSource.js'
+import { getErrorMessage } from './utils/errors.js'
 
 const VALID_MARKETS = new Set(['US', 'CN', 'HK'])
 
@@ -72,13 +74,20 @@ let vectorStore: IVectorStore | undefined
 let embedder: IEmbedder | undefined
 
 if (ragMode === 'qdrant') {
+  const qdrantUrl = process.env['QDRANT_URL']
+  const openaiKey = process.env['OPENAI_API_KEY']
+  if (!qdrantUrl || !openaiKey) {
+    throw new Error('QDRANT_URL and OPENAI_API_KEY are required for qdrant RAG mode')
+  }
+  const embeddingModel = 'text-embedding-3-small'
   console.log('[RAG] Full mode: Qdrant + OpenAI embeddings')
   vectorStore = new QdrantVectorStore({
-    url: process.env['QDRANT_URL']!,
+    url: qdrantUrl,
+    apiKey: process.env['QDRANT_API_KEY'],
     collectionName: 'traderagent',
-    vectorSize: 1536, // text-embedding-3-small dimension
+    vectorSize: getEmbeddingDimension(embeddingModel),
   })
-  embedder = new Embedder({ apiKey: process.env['OPENAI_API_KEY']! })
+  embedder = new Embedder({ apiKey: openaiKey, model: embeddingModel })
 } else if (ragMode === 'memory') {
   console.log('[RAG] In-memory mode: local store + Ollama embeddings')
   vectorStore = new InMemoryVectorStore()
@@ -93,7 +102,7 @@ const registry = new LLMRegistry(agentConfig)
 const researcherConfig = { vectorStore, embedder }
 
 // Wrap each LLM provider with TokenProfiler to log per-call token usage
-const wrap = (agent: string) => new TokenProfiler(registry.get(agent), agent)
+const wrap = (agent: string) => new TokenProfiler(new RetryLLMProvider(registry.get(agent)), agent)
 
 const orchestrator = new Orchestrator({
   dataFetcher: new DataFetcher({
@@ -155,6 +164,6 @@ try {
   TokenProfiler.printSummary()
 } catch (err) {
   TokenProfiler.printSummary()
-  console.error(`\nPIPELINE FAILED: ${(err as Error).message}`)
+  console.error(`\nPIPELINE FAILED: ${getErrorMessage(err)}`)
   process.exit(1)
 }

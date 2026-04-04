@@ -22,6 +22,9 @@ export class AdvisorScheduler {
   }
 
   start(): void {
+    if (!cron.validate(this.cronExpression)) {
+      throw new Error(`Invalid cron expression: "${this.cronExpression}"`)
+    }
     console.log(`[AdvisorScheduler] Starting with cron: ${this.cronExpression}`)
     console.log(`[AdvisorScheduler] Next run will execute at the scheduled time`)
 

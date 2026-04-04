@@ -4,6 +4,7 @@ import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { IVectorStore } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { parseJson } from '../../utils/parseJson.js'
+import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
 
 export type ResearcherConfig = {
   llm: ILLMProvider
@@ -120,17 +121,7 @@ export abstract class BaseResearcher implements IAgent {
 
   /** Extract bar array from various OHLCV data shapes */
   private extractBars(data: unknown): Record<string, unknown>[] {
-    if (Array.isArray(data)) return data
-    if (data && typeof data === 'object') {
-      const d = data as Record<string, unknown>
-      if (Array.isArray(d.quotes)) return d.quotes as Record<string, unknown>[]
-      // Finnhub candle format
-      if (d.s === 'ok' && Array.isArray(d.c)) {
-        const c = d.c as number[], o = d.o as number[], h = d.h as number[], l = d.l as number[], v = d.v as number[], t = d.t as number[]
-        return c.map((_, i) => ({ open: o[i], high: h[i], low: l[i], close: c[i], volume: v[i], date: t?.[i] ? new Date(t[i] * 1000).toISOString() : '' }))
-      }
-    }
-    return []
+    return normalizeOhlcv(data) as unknown as Record<string, unknown>[]
   }
 
   protected async retrieveContext(report: TradingReport): Promise<string> {

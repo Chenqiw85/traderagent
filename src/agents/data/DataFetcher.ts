@@ -60,7 +60,8 @@ export class DataFetcher implements IAgent {
         }
         fetchPromises.push(
           source.fetch(query).catch((err) => {
-            console.warn(`[DataFetcher] ${source.name}/${type} failed: ${(err as Error).message}`)
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn(`[DataFetcher] ${source.name}/${type} failed: ${msg}`)
             return null
           }),
         )
@@ -105,7 +106,7 @@ export class DataFetcher implements IAgent {
             metadata: {
               ticker,
               market,
-              source: `datasource-${this.dataSources.find(() => true)?.name ?? 'unknown'}`,
+              source: `datasource-${result.ticker}`,
               type: result.type,
               chunkIndex: chunks[i].index,
               fetchedAt: result.fetchedAt.toISOString(),

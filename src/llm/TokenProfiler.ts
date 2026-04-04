@@ -24,18 +24,22 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
+const isDebug = process.env['DEBUG'] === '1' || process.env['DEBUG'] === 'true'
+
 export class TokenProfiler implements ILLMProvider {
   readonly name: string
   private inner: ILLMProvider
   private agentName: string
+  private records: CallRecord[]
 
-  private static records: CallRecord[] = []
-
-  constructor(inner: ILLMProvider, agentName: string) {
+  constructor(inner: ILLMProvider, agentName: string, records?: CallRecord[]) {
     this.inner = inner
     this.name = inner.name
     this.agentName = agentName
+    this.records = records ?? TokenProfiler.sharedRecords
   }
+
+  private static sharedRecords: CallRecord[] = []
 
   async chat(messages: Message[], options?: LLMOptions): Promise<string> {
     const systemMsg = messages.filter((m) => m.role === 'system')
@@ -49,25 +53,8 @@ export class TokenProfiler implements ILLMProvider {
     const userTokens = estimateTokens(userMsg.map((m) => m.content).join(''))
     const totalInputTokens = estimateTokens(messages.map((m) => m.content).join(''))
 
-    console.log(`\n${'─'.repeat(60)}`)
-    console.log(`📊 TOKEN PROFILE: ${this.agentName} (model: ${this.inner.name})`)
-    console.log(`${'─'.repeat(60)}`)
-    console.log(`  System prompt:  ${systemChars.toLocaleString()} chars  ≈ ${systemTokens.toLocaleString()} tokens`)
-    console.log(`  User message:   ${userChars.toLocaleString()} chars  ≈ ${userTokens.toLocaleString()} tokens`)
-    console.log(`  Total input:    ${totalInputChars.toLocaleString()} chars  ≈ ${totalInputTokens.toLocaleString()} tokens`)
-
-    // Log breakdown of system prompt sections
-    for (const msg of systemMsg) {
-      const sections = msg.content.split(/(?=={3,}\s)/g)
-      if (sections.length > 1) {
-        console.log(`  ── System prompt breakdown:`)
-        for (const section of sections) {
-          const firstLine = section.split('\n')[0].trim().slice(0, 60)
-          const chars = section.length
-          const tokens = estimateTokens(section)
-          console.log(`     ${firstLine.padEnd(50)} ${chars.toLocaleString().padStart(8)} chars  ≈ ${tokens.toLocaleString().padStart(6)} tokens`)
-        }
-      }
+    if (isDebug) {
+      console.log(`[TokenProfiler] ${this.agentName} input: ${totalInputChars.toLocaleString()} chars ≈ ${totalInputTokens.toLocaleString()} tokens`)
     }
 
     const start = performance.now()
@@ -77,11 +64,11 @@ export class TokenProfiler implements ILLMProvider {
     const outputChars = response.length
     const outputTokens = estimateTokens(response)
 
-    console.log(`  Output:         ${outputChars.toLocaleString()} chars  ≈ ${outputTokens.toLocaleString()} tokens`)
-    console.log(`  Duration:       ${(durationMs / 1000).toFixed(1)}s`)
-    console.log(`${'─'.repeat(60)}`)
+    if (isDebug) {
+      console.log(`[TokenProfiler] ${this.agentName} output: ${outputChars.toLocaleString()} chars ≈ ${outputTokens.toLocaleString()} tokens (${(durationMs / 1000).toFixed(1)}s)`)
+    }
 
-    TokenProfiler.records.push({
+    this.records.push({
       agent: this.agentName,
       model: this.inner.name,
       systemTokens,
@@ -104,9 +91,9 @@ export class TokenProfiler implements ILLMProvider {
   }
 
   /** Print a full summary table of all LLM calls in the pipeline */
-  static printSummary(): void {
-    const records = TokenProfiler.records
-    if (records.length === 0) return
+  static printSummary(records?: CallRecord[]): void {
+    const recs = records ?? TokenProfiler.sharedRecords
+    if (recs.length === 0) return
 
     console.log(`\n${'═'.repeat(80)}`)
     console.log(`TOKEN USAGE SUMMARY — ALL LLM CALLS`)
@@ -120,7 +107,7 @@ export class TokenProfiler implements ILLMProvider {
     let grandOutputTokens = 0
     let grandDuration = 0
 
-    for (const r of records) {
+    for (const r of recs) {
       const total = r.totalInputTokens + r.outputTokens
       grandInputTokens += r.totalInputTokens
       grandOutputTokens += r.outputTokens
@@ -138,16 +125,16 @@ export class TokenProfiler implements ILLMProvider {
     console.log(`${'═'.repeat(80)}`)
 
     // Warn if any single call exceeded common limits
-    for (const r of records) {
+    for (const r of recs) {
       if (r.totalInputTokens > 30_000) {
-        console.log(`\n⚠️  WARNING: ${r.agent} used ~${r.totalInputTokens.toLocaleString()} input tokens — close to or exceeding model limits!`)
+        console.log(`\n  WARNING: ${r.agent} used ~${r.totalInputTokens.toLocaleString()} input tokens — close to or exceeding model limits!`)
         console.log(`   System prompt: ${r.systemContentLength.toLocaleString()} chars (${r.systemTokens.toLocaleString()} tokens)`)
       }
     }
   }
 
-  /** Reset records between runs */
+  /** Reset shared records between runs */
   static reset(): void {
-    TokenProfiler.records = []
+    TokenProfiler.sharedRecords = []
   }
 }

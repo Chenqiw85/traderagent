@@ -34,8 +34,9 @@ describe('QdrantVectorStore', () => {
     })
   })
 
-  it('ensureCollection creates collection if not exists', async () => {
-    await expect(store.ensureCollection()).resolves.not.toThrow()
+  it('ensureCollection is called lazily on first upsert', async () => {
+    // ensureCollection is now private and called automatically on first upsert/search
+    await expect(store.upsert([])).resolves.not.toThrow()
   })
 
   it('upsert inserts documents', async () => {

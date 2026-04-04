@@ -81,19 +81,20 @@ export class YFinanceSource implements IDataSource {
             return d != null && new Date(d as string) >= oneYearAgo
           })
         const qs = quoteSummary as Record<string, unknown>
+        const trimmedQs = { ...qs }
         if (qs.earningsHistory && typeof qs.earningsHistory === 'object') {
           const eh = qs.earningsHistory as Record<string, unknown>
-          eh.history = filterByDate(eh.history as Record<string, unknown>[] | undefined)
+          trimmedQs.earningsHistory = { ...eh, history: filterByDate(eh.history as Record<string, unknown>[] | undefined) }
         }
         if (qs.incomeStatementHistory && typeof qs.incomeStatementHistory === 'object') {
           const ish = qs.incomeStatementHistory as Record<string, unknown>
-          ish.incomeStatementHistory = filterByDate(ish.incomeStatementHistory as Record<string, unknown>[] | undefined)
+          trimmedQs.incomeStatementHistory = { ...ish, incomeStatementHistory: filterByDate(ish.incomeStatementHistory as Record<string, unknown>[] | undefined) }
         }
         if (qs.balanceSheetHistory && typeof qs.balanceSheetHistory === 'object') {
           const bsh = qs.balanceSheetHistory as Record<string, unknown>
-          bsh.balanceSheetStatements = filterByDate(bsh.balanceSheetStatements as Record<string, unknown>[] | undefined)
+          trimmedQs.balanceSheetHistory = { ...bsh, balanceSheetStatements: filterByDate(bsh.balanceSheetStatements as Record<string, unknown>[] | undefined) }
         }
-        data = { quoteSummary, quote }
+        data = { quoteSummary: trimmedQs, quote }
         break
       }
       case 'news': {

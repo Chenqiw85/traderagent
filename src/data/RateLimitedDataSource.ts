@@ -6,7 +6,7 @@ import type { RateLimitConfig } from '../config/rateLimits.js'
 export class RateLimitedDataSource implements IDataSource {
   readonly name: string
   private readonly inner: IDataSource
-  private queue: PQueue
+  private readonly queue: PQueue
   private readonly originalConfig: Readonly<RateLimitConfig>
   private restoreTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -14,7 +14,11 @@ export class RateLimitedDataSource implements IDataSource {
     this.name = inner.name
     this.inner = inner
     this.originalConfig = { ...config }
-    this.queue = this.createQueue(config)
+    this.queue = new PQueue({
+      concurrency: config.concurrency,
+      interval: config.intervalMs,
+      intervalCap: config.intervalCap,
+    })
   }
 
   async fetch(query: DataQuery): Promise<DataResult> {
@@ -22,30 +26,17 @@ export class RateLimitedDataSource implements IDataSource {
   }
 
   /**
-   * Halve the intervalCap for `cooldownMs` milliseconds,
-   * then restore original rate. Prevents queued requests
-   * from also hitting the rate limit.
+   * Pause the queue for `cooldownMs` milliseconds to avoid hitting rate limits,
+   * then resume. Unlike replacing the queue, this preserves in-flight requests.
    */
   adjustRate(cooldownMs: number = 60_000): void {
     if (this.restoreTimer !== null) return // already adjusting
 
-    const reducedCap = Math.max(1, Math.floor(this.originalConfig.intervalCap / 2))
-    this.queue = this.createQueue({
-      ...this.originalConfig,
-      intervalCap: reducedCap,
-    })
+    this.queue.pause()
 
     this.restoreTimer = setTimeout(() => {
-      this.queue = this.createQueue(this.originalConfig)
+      this.queue.start()
       this.restoreTimer = null
     }, cooldownMs)
-  }
-
-  private createQueue(config: RateLimitConfig): PQueue {
-    return new PQueue({
-      concurrency: config.concurrency,
-      interval: config.intervalMs,
-      intervalCap: config.intervalCap,
-    })
   }
 }

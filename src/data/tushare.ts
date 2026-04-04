@@ -20,7 +20,10 @@ export class TushareSource implements IDataSource {
   constructor(config?: TushareConfig) {
     this.token = config?.token ?? process.env['TUSHARE_TOKEN'] ?? ''
     if (!this.token) throw new Error('Missing TUSHARE_TOKEN')
-    this.baseURL = config?.baseURL ?? 'http://api.tushare.pro'
+    this.baseURL = config?.baseURL ?? 'https://api.tushare.pro'
+    if (!this.baseURL.startsWith('https://')) {
+      throw new Error('TushareSource: baseURL must use HTTPS to protect the token')
+    }
   }
 
   private async request(apiName: string, params: Record<string, unknown>, fields?: string): Promise<unknown> {
@@ -53,7 +56,7 @@ export class TushareSource implements IDataSource {
   async fetch(query: DataQuery): Promise<DataResult> {
     const { ticker, market, type } = query
     // Tushare uses ts_code format, e.g. "000001.SZ"
-    const tsCode = ticker.includes('.') ? ticker : ticker
+    const tsCode = ticker.includes('.') ? ticker : `${ticker}.SZ`
 
     let data: unknown
 

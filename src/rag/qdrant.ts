@@ -14,6 +14,7 @@ export class QdrantVectorStore implements IVectorStore {
   private client: QdrantClient
   private collectionName: string
   private vectorSize: number
+  private collectionReady = false
 
   constructor(config: QdrantConfig) {
     this.client = new QdrantClient({
@@ -24,8 +25,9 @@ export class QdrantVectorStore implements IVectorStore {
     this.vectorSize = config.vectorSize
   }
 
-  /** Ensure collection exists before first use */
-  async ensureCollection(): Promise<void> {
+  /** Ensure collection exists — called lazily on first upsert or search */
+  private async ensureCollection(): Promise<void> {
+    if (this.collectionReady) return
     const collections = await this.client.getCollections()
     const exists = collections.collections.some((c) => c.name === this.collectionName)
     if (!exists) {
@@ -33,10 +35,12 @@ export class QdrantVectorStore implements IVectorStore {
         vectors: { size: this.vectorSize, distance: 'Cosine' },
       })
     }
+    this.collectionReady = true
   }
 
   async upsert(docs: Document[]): Promise<void> {
     if (docs.length === 0) return
+    await this.ensureCollection()
 
     const points = docs.map((doc) => ({
       id: doc.id,
@@ -51,6 +55,8 @@ export class QdrantVectorStore implements IVectorStore {
   }
 
   async search(query: number[], topK: number, filter?: MetadataFilter): Promise<Document[]> {
+    await this.ensureCollection()
+
     const qdrantFilter = filter?.must
       ? {
           must: filter.must.map((condition) => {

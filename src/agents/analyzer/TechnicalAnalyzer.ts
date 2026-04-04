@@ -8,8 +8,7 @@ import {
   calcOBV,
   calcBeta, calcMaxDrawdown, calcVaR,
 } from '../../indicators/index.js'
-
-type OHLCVBar = { date?: string; open: number; high: number; low: number; close: number; volume: number }
+import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
 
 type TechnicalAnalyzerConfig = { dataSource: IDataSource }
 
@@ -68,37 +67,12 @@ export class TechnicalAnalyzer implements IAgent {
     return { ...report, computedIndicators }
   }
 
-  private parseBars(data: unknown): OHLCVBar[] {
-    if (!Array.isArray(data)) {
-      const d = data as Record<string, unknown>
-      // Finnhub candle format
-      if (d.s === 'ok' && Array.isArray(d.c)) {
-        const c = d.c as number[], h = d.h as number[], l = d.l as number[], o = d.o as number[], v = d.v as number[]
-        return c.map((_, i) => ({ open: Number(o[i]), high: Number(h[i]), low: Number(l[i]), close: Number(c[i]), volume: Number(v[i]) }))
-      }
-      // yahoo-finance2 chart format: { quotes: [...] }
-      if (Array.isArray(d.quotes)) {
-        return (d.quotes as Record<string, unknown>[]).map((bar) => ({
-          open: Number(bar.open ?? bar.Open),
-          high: Number(bar.high ?? bar.High),
-          low: Number(bar.low ?? bar.Low),
-          close: Number(bar.close ?? bar.Close ?? bar.adjClose),
-          volume: Number(bar.volume ?? bar.Volume),
-        }))
-      }
-      // Single quote object fallback
-      if (d.price != null) {
-        return [{ open: (d.open as number) ?? (d.price as number), high: (d.high as number) ?? (d.price as number), low: (d.low as number) ?? (d.price as number), close: d.price as number, volume: (d.volume as number) ?? 0 }]
-      }
-      throw new Error(`TechnicalAnalyzer: unrecognized OHLCV data format (keys: ${Object.keys(d).join(', ')})`)
+  private parseBars(data: unknown) {
+    const bars = normalizeOhlcv(data)
+    if (bars.length === 0 && data && typeof data === 'object') {
+      throw new Error(`TechnicalAnalyzer: unrecognized OHLCV data format (keys: ${Object.keys(data as object).join(', ')})`)
     }
-    return data.map((bar: Record<string, unknown>) => ({
-      open: Number(bar.open ?? bar.Open),
-      high: Number(bar.high ?? bar.High),
-      low: Number(bar.low ?? bar.Low),
-      close: Number(bar.close ?? bar.Close ?? bar.adjClose),
-      volume: Number(bar.volume ?? bar.Volume),
-    }))
+    return bars
   }
 
   private calcReturns(prices: number[]): number[] {

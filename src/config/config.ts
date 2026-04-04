@@ -33,13 +33,18 @@ export const agentConfig: AgentConfigMap = {
   marketTrendAnalyzer:  { llm: 'deepseek', model: 'deepseek-chat' },
 }
 
-export const dataSourceConfig = {
-  US: ['yfinance', 'polygon', 'newsapi', 'secedgar'],
-  CN: ['tushare', 'akshare'],
-  HK: ['akshare'],
-} as const
-
 export type RAGMode = 'qdrant' | 'memory' | 'disabled'
+
+/** Embedding model → vector dimension mapping */
+export const EMBEDDING_DIMENSIONS: Record<string, number> = {
+  'text-embedding-3-small': 1536,
+  'text-embedding-3-large': 3072,
+  'nomic-embed-text': 768,
+}
+
+export function getEmbeddingDimension(model: string): number {
+  return EMBEDDING_DIMENSIONS[model] ?? 1536
+}
 
 export function detectRAGMode(): RAGMode {
   if (process.env['OPENAI_API_KEY'] && process.env['QDRANT_URL']) return 'qdrant'

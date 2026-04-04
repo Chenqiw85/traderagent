@@ -1,11 +1,12 @@
 import { Ollama } from 'ollama'
+import type { IEmbedder } from './IEmbedder.js'
 
 type OllamaEmbedderConfig = {
   model: string
   host?: string
 }
 
-export class OllamaEmbedder {
+export class OllamaEmbedder implements IEmbedder {
   private client: Ollama
   private model: string
 

@@ -58,10 +58,10 @@ export class FinnhubSource implements IDataSource {
         ])
         // Keep only the 4 most recent filings (1 year of quarterly reports)
         const filings = financials as Record<string, unknown>
-        if (Array.isArray(filings.data)) {
-          filings.data = filings.data.slice(0, 4)
-        }
-        data = { profile, financials, metrics }
+        const trimmedFinancials = Array.isArray(filings.data)
+          ? { ...filings, data: filings.data.slice(0, 4) }
+          : filings
+        data = { profile, financials: trimmedFinancials, metrics }
         break
       }
       case 'technicals': {

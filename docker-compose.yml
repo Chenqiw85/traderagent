@@ -4,9 +4,9 @@ services:
     environment:
       POSTGRES_DB: traderagent
       POSTGRES_USER: trader
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tradersecret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     ports:
-      - '5433:5432'
+      - '127.0.0.1:5433:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -18,7 +18,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://trader:${POSTGRES_PASSWORD:-tradersecret}@postgres:5432/traderagent
+      DATABASE_URL: postgresql://trader:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/traderagent
       TZ: America/New_York
 
 volumes:

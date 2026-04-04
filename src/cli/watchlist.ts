@@ -1,29 +1,32 @@
 // src/cli/watchlist.ts
 import { addTicker, removeTicker, listTickers } from '../sync/watchlist.js'
-import type { Market } from '../agents/base/types.js'
+import { validateTicker, validateMarket } from '../utils/validation.js'
 
 async function main() {
   const [command, ...args] = process.argv.slice(2)
 
   switch (command) {
     case 'add': {
-      const [ticker, market = 'US'] = args
-      if (!ticker) {
+      const [tickerRaw, marketRaw = 'US'] = args
+      if (!tickerRaw) {
         console.error('Usage: watchlist add <TICKER> [US|CN|HK]')
         process.exit(1)
       }
-      const entry = await addTicker(ticker.toUpperCase(), market.toUpperCase() as Market)
+      const ticker = validateTicker(tickerRaw)
+      const market = validateMarket(marketRaw)
+      const entry = await addTicker(ticker, market)
       console.log(`Added ${entry.ticker} (${entry.market}) to watchlist`)
       break
     }
     case 'remove': {
-      const [ticker] = args
-      if (!ticker) {
+      const [tickerRaw] = args
+      if (!tickerRaw) {
         console.error('Usage: watchlist remove <TICKER>')
         process.exit(1)
       }
-      await removeTicker(ticker.toUpperCase())
-      console.log(`Removed ${ticker.toUpperCase()} from watchlist`)
+      const ticker = validateTicker(tickerRaw)
+      await removeTicker(ticker)
+      console.log(`Removed ${ticker} from watchlist`)
       break
     }
     case 'list': {

@@ -1,5 +1,6 @@
 // src/agents/advisor/AdvisorAgent.ts
 
+import PQueue from 'p-queue'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { IDataSource } from '../../data/IDataSource.js'
 import type { IMessageSender } from '../../messaging/IMessageSender.js'
@@ -8,6 +9,7 @@ import type { AdvisorReport, IndexDef, MarketTrend, TickerAdvisory, WatchlistEnt
 import { MarketTrendAnalyzer } from './MarketTrendAnalyzer.js'
 import { formatAdvisorReport } from './ReportFormatter.js'
 import { parseJson } from '../../utils/parseJson.js'
+import { getErrorMessage } from '../../utils/errors.js'
 
 type AdvisorAgentConfig = {
   readonly llm: ILLMProvider
@@ -17,6 +19,7 @@ type AdvisorAgentConfig = {
   readonly messageSender?: IMessageSender
   readonly whatsappTo?: string
   readonly indices: readonly IndexDef[]
+  readonly concurrency?: number
 }
 
 export class AdvisorAgent {
@@ -26,6 +29,7 @@ export class AdvisorAgent {
   private readonly messageSender?: IMessageSender
   private readonly whatsappTo?: string
   private readonly indices: readonly IndexDef[]
+  private readonly concurrency: number
 
   constructor(config: AdvisorAgentConfig) {
     this.llm = config.llm
@@ -37,6 +41,7 @@ export class AdvisorAgent {
     this.messageSender = config.messageSender
     this.whatsappTo = config.whatsappTo
     this.indices = config.indices
+    this.concurrency = config.concurrency ?? 3
   }
 
   async run(watchlist: readonly WatchlistEntry[]): Promise<AdvisorReport> {
@@ -47,26 +52,31 @@ export class AdvisorAgent {
     const marketTrends = await this.trendAnalyzer.analyze(this.indices)
     console.log(`[Advisor] Completed ${marketTrends.length} index analyses`)
 
-    // Stage 2: Run full pipeline for each watchlist ticker
+    // Stage 2: Run full pipeline for each watchlist ticker (parallel with concurrency limit)
     const tickerAdvisories: TickerAdvisory[] = []
-    for (const entry of watchlist) {
-      try {
-        console.log(`[Advisor] Running pipeline for ${entry.ticker} (${entry.market})...`)
-        const report = await this.orchestrator.run(entry.ticker, entry.market)
-        if (report.finalDecision) {
-          tickerAdvisories.push({
-            ticker: entry.ticker,
-            market: entry.market,
-            decision: report.finalDecision,
-            keyFindings: report.researchFindings
-              .filter((f) => f.confidence >= 0.5)
-              .map((f) => `${f.agentName}: ${f.stance} (${(f.confidence * 100).toFixed(0)}%)`),
-          })
+    const queue = new PQueue({ concurrency: this.concurrency })
+
+    const tasks = watchlist.map((entry) =>
+      queue.add(async () => {
+        try {
+          console.log(`[Advisor] Running pipeline for ${entry.ticker} (${entry.market})...`)
+          const report = await this.orchestrator.run(entry.ticker, entry.market)
+          if (report.finalDecision) {
+            tickerAdvisories.push({
+              ticker: entry.ticker,
+              market: entry.market,
+              decision: report.finalDecision,
+              keyFindings: report.researchFindings
+                .filter((f) => f.confidence >= 0.5)
+                .map((f) => `${f.agentName}: ${f.stance} (${(f.confidence * 100).toFixed(0)}%)`),
+            })
+          }
+        } catch (err) {
+          console.error(`[Advisor] Pipeline failed for ${entry.ticker}: ${getErrorMessage(err)}`)
         }
-      } catch (err) {
-        console.error(`[Advisor] Pipeline failed for ${entry.ticker}: ${(err as Error).message}`)
-      }
-    }
+      })
+    )
+    await Promise.all(tasks)
 
     // Stage 3: LLM synthesis — combine everything into advisory summary
     const summary = await this.synthesize(marketTrends, tickerAdvisories)
@@ -83,9 +93,10 @@ export class AdvisorAgent {
       try {
         const formatted = formatAdvisorReport(advisorReport)
         await this.messageSender.send(this.whatsappTo, formatted)
-        console.log(`[Advisor] Report sent to ${this.whatsappTo}`)
+        const maskedTo = this.whatsappTo.replace(/\d(?=\d{4})/g, '*')
+        console.log(`[Advisor] Report sent to ${maskedTo}`)
       } catch (err) {
-        console.error(`[Advisor] Failed to send WhatsApp message: ${(err as Error).message}`)
+        console.error(`[Advisor] Failed to send WhatsApp message: ${getErrorMessage(err)}`)
       }
     }
 
