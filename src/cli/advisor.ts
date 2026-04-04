@@ -31,7 +31,7 @@ import { InMemoryVectorStore } from '../rag/InMemoryVectorStore.js'
 import { Embedder } from '../rag/embedder.js'
 import { OllamaEmbedder } from '../rag/OllamaEmbedder.js'
 import { agentConfig, detectRAGMode, getEmbeddingDimension } from '../config/config.js'
-import { createTwilioSenderFromEnv } from '../messaging/TwilioWhatsAppSender.js'
+import { createWhatsAppSenderFromEnv } from '../messaging/WhatsAppWebSender.js'
 import { listTickers } from '../sync/watchlist.js'
 import type { IDataSource } from '../data/IDataSource.js'
 import type { IVectorStore } from '../rag/IVectorStore.js'
@@ -117,9 +117,11 @@ if (isDryRun) {
   console.log('[Advisor] Dry-run mode — WhatsApp disabled')
 } else {
   try {
-    messageSender = createTwilioSenderFromEnv()
+    const sender = createWhatsAppSenderFromEnv()
+    await sender.connect()
+    messageSender = sender
   } catch {
-    console.log('[Advisor] Twilio not configured — reports will print to console only')
+    console.log('[Advisor] WhatsApp not configured — reports will print to console only')
   }
 }
 
