@@ -8,9 +8,9 @@ export async function addTicker(ticker: string, market: Market) {
   })
 }
 
-export async function removeTicker(ticker: string) {
+export async function removeTicker(ticker: string, market: Market) {
   return prisma.watchlist.delete({
-    where: { ticker },
+    where: { ticker_market: { ticker, market } },
   })
 }
 

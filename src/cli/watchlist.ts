@@ -22,14 +22,15 @@ async function main() {
       break
     }
     case 'remove': {
-      const [tickerRaw] = args
+      const [tickerRaw, marketRaw = 'US'] = args
       if (!tickerRaw) {
-        log.error('Usage: watchlist remove <TICKER>')
+        log.error('Usage: watchlist remove <TICKER> [US|CN|HK]')
         process.exit(1)
       }
       const ticker = validateTicker(tickerRaw)
-      await removeTicker(ticker)
-      log.info({ ticker }, 'Removed from watchlist')
+      const market = validateMarket(marketRaw)
+      await removeTicker(ticker, market)
+      log.info({ ticker, market }, 'Removed from watchlist')
       break
     }
     case 'list': {

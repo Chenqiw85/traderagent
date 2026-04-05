@@ -65,7 +65,7 @@ export class DataSyncService {
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
           const result = await source.fetch({ ticker, market, type: dataType })
-          await this.writeToDb(ticker, market, dataType, result.data, source.name)
+          await this.writeToDb(ticker, market, dataType, result.data, source.name, result.fetchedAt)
           await this.logFetch(ticker, market, dataType, source.name, 'success', null, Date.now() - start)
           return // success
         } catch (err) {
@@ -109,6 +109,7 @@ export class DataSyncService {
     dataType: DataType,
     data: unknown,
     source: string,
+    fetchedAt: Date,
   ): Promise<void> {
     switch (dataType) {
       case 'ohlcv': {
@@ -156,26 +157,33 @@ export class DataSyncService {
         break
       }
       case 'technicals': {
-        const rawData = data as { quotes?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
-        const bars = Array.isArray(rawData) ? rawData : rawData.quotes ?? []
-        if (bars.length === 0) return
-        await prisma.ohlcv.createMany({
-          data: bars.map((bar: Record<string, unknown>) => ({
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return
+        const date = this.toDayBucket(fetchedAt)
+        await prisma.technicals.upsert({
+          where: {
+            ticker_market_date: {
+              ticker,
+              market,
+              date,
+            },
+          },
+          create: {
             ticker,
             market,
-            date: bar.date ? new Date(bar.date as string) : new Date(),
-            open: Number(bar.open),
-            high: Number(bar.high),
-            low: Number(bar.low),
-            close: Number(bar.close),
-            volume: BigInt(Math.round(Number(bar.volume))),
-            source,
-          })).filter((row) => !isNaN(row.date.getTime())),
-          skipDuplicates: true,
+            date,
+            indicators: data as object,
+          },
+          update: {
+            indicators: data as object,
+          },
         })
         break
       }
     }
+  }
+
+  private toDayBucket(date: Date): Date {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
   }
 
   private async logFetch(

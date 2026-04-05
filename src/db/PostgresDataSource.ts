@@ -42,6 +42,7 @@ export class PostgresDataSource implements IDataSource {
     const rows = await prisma.ohlcv.findMany({
       where: {
         ticker,
+        market,
         date: { gte: period1, lte: period2 },
       },
       orderBy: { date: 'asc' },
@@ -56,7 +57,7 @@ export class PostgresDataSource implements IDataSource {
 
   private async fetchFundamentals(ticker: string, market: Market): Promise<DataResult> {
     const record = await prisma.fundamentals.findFirst({
-      where: { ticker },
+      where: { ticker, market },
       orderBy: { fetchedAt: 'desc' },
     })
 
@@ -84,6 +85,7 @@ export class PostgresDataSource implements IDataSource {
     const articles = await prisma.news.findMany({
       where: {
         ticker,
+        market,
         publishedAt: { gte: period1, lte: period2 },
       },
       orderBy: { publishedAt: 'desc' },
@@ -98,7 +100,7 @@ export class PostgresDataSource implements IDataSource {
 
   private async fetchTechnicals(ticker: string, market: Market): Promise<DataResult> {
     const record = await prisma.technicals.findFirst({
-      where: { ticker },
+      where: { ticker, market },
       orderBy: { computedAt: 'desc' },
     })
 

@@ -8,11 +8,13 @@ datasource db {
 
 model Watchlist {
   id        Int      @id @default(autoincrement())
-  ticker    String   @unique
+  ticker    String
   market    String   // US, CN, HK
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([ticker, market])
 }
 
 model Ohlcv {
@@ -28,8 +30,8 @@ model Ohlcv {
   source   String
   fetchedAt DateTime @default(now())
 
-  @@unique([ticker, date])
-  @@index([ticker])
+  @@unique([ticker, market, date])
+  @@index([ticker, market])
 }
 
 model Fundamentals {
@@ -40,7 +42,7 @@ model Fundamentals {
   source   String
   fetchedAt DateTime @default(now())
 
-  @@index([ticker])
+  @@index([ticker, market])
 }
 
 model News {
@@ -54,7 +56,7 @@ model News {
   data        Json?
   fetchedAt   DateTime @default(now())
 
-  @@index([ticker])
+  @@index([ticker, market])
 }
 
 model Technicals {
@@ -65,8 +67,8 @@ model Technicals {
   indicators Json
   computedAt DateTime @default(now())
 
-  @@unique([ticker, date])
-  @@index([ticker])
+  @@unique([ticker, market, date])
+  @@index([ticker, market])
 }
 
 model FetchLog {
@@ -80,7 +82,7 @@ model FetchLog {
   duration Int      // milliseconds
   fetchedAt DateTime @default(now())
 
-  @@index([ticker])
+  @@index([ticker, market])
   @@index([fetchedAt])
 }
 
@@ -98,7 +100,7 @@ model BacktestRun {
   createdAt      DateTime           @default(now())
   decisions      BacktestDecision[]
 
-  @@index([ticker])
+  @@index([ticker, market])
 }
 
 model BacktestDecision {
@@ -132,4 +134,35 @@ model Lesson {
 
   @@index([ticker])
   @@index([passNumber])
+}
+
+model AnalysisRun {
+  id              String          @id @default(uuid())
+  ticker          String
+  market          String
+  asOf            DateTime
+  ragMode         String?
+  status          String
+  finalAction     String?
+  finalConfidence Float?
+  snapshot        Json?
+  createdAt       DateTime        @default(now())
+  completedAt     DateTime?
+  stages          AnalysisStage[]
+
+  @@index([ticker, market, asOf])
+  @@index([createdAt])
+}
+
+model AnalysisStage {
+  id        String      @id @default(uuid())
+  runId     String
+  run       AnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stage     String
+  agent     String
+  summary   String
+  payload   Json
+  createdAt DateTime    @default(now())
+
+  @@index([runId, stage])
 }

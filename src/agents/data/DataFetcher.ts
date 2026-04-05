@@ -4,7 +4,7 @@ import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, DataQuery, DataResult, DataType, Market, TradingReport } from '../base/types.js'
 import { DATA_CRITICALITY } from '../base/types.js'
 import type { IDataSource } from '../../data/IDataSource.js'
-import type { IVectorStore, Document } from '../../rag/IVectorStore.js'
+import { supportsTextSearch, type IVectorStore, type Document } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { chunkText, type ChunkOptions } from '../../rag/chunker.js'
 import crypto from 'node:crypto'
@@ -87,7 +87,7 @@ export class DataFetcher implements IAgent {
     }
 
     // 2. Chunk + embed + store (if vector store and embedder are configured)
-    if (this.vectorStore && this.embedder) {
+    if (this.vectorStore && (this.embedder || supportsTextSearch(this.vectorStore))) {
       const docs: Document[] = []
 
       for (const result of validResults) {
@@ -99,7 +99,11 @@ export class DataFetcher implements IAgent {
 
         if (texts.length === 0) continue
 
-        const embeddings = await this.embedder.embedBatch(texts)
+        const embeddings = supportsTextSearch(this.vectorStore)
+          ? texts.map(() => undefined)
+          : this.embedder
+            ? await this.embedder.embedBatch(texts)
+            : []
 
         for (let i = 0; i < chunks.length; i++) {
           docs.push({

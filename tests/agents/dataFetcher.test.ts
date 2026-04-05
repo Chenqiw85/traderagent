@@ -1,6 +1,7 @@
 // tests/agents/dataFetcher.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { DataFetcher } from '../../src/agents/data/DataFetcher.js'
+import { BM25VectorStore } from '../../src/rag/BM25VectorStore.js'
 import type { IDataSource } from '../../src/data/IDataSource.js'
 import type { IVectorStore } from '../../src/rag/IVectorStore.js'
 import type { Embedder } from '../../src/rag/embedder.js'
@@ -105,6 +106,17 @@ describe('DataFetcher', () => {
     const result = await fetcher.run(report)
     // Should still populate rawData
     expect(result.rawData.length).toBe(4)
+  })
+
+  it('stores documents in BM25 mode without embeddings', async () => {
+    const source = createMockDataSource('test')
+    const vectorStore = new BM25VectorStore()
+    const upsertSpy = vi.spyOn(vectorStore, 'upsert')
+    const fetcher = new DataFetcher({ dataSources: [source], vectorStore })
+
+    await fetcher.run(createEmptyReport())
+
+    expect(upsertSpy).toHaveBeenCalled()
   })
 
   it('preserves existing report data', async () => {

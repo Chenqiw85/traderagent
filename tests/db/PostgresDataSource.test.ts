@@ -52,6 +52,14 @@ describe('PostgresDataSource', () => {
       expect(result.type).toBe('ohlcv')
       expect(result.data).toEqual(rows)
       expect(result.fetchedAt).toBeInstanceOf(Date)
+      expect(mockOhlcvFindMany).toHaveBeenCalledWith({
+        where: {
+          ticker: 'AAPL',
+          market: 'US',
+          date: { gte: expect.any(Date), lte: expect.any(Date) },
+        },
+        orderBy: { date: 'asc' },
+      })
     })
 
     it('throws when no rows exist', async () => {
@@ -74,6 +82,10 @@ describe('PostgresDataSource', () => {
       const result = await source.fetch(query)
       expect(result.type).toBe('fundamentals')
       expect(result.data).toEqual({ pe: 28.5, pb: 12.3 })
+      expect(mockFundamentalsFindFirst).toHaveBeenCalledWith({
+        where: { ticker: 'AAPL', market: 'US' },
+        orderBy: { fetchedAt: 'desc' },
+      })
     })
 
     it('throws when record is stale (>24h old)', async () => {
@@ -105,6 +117,14 @@ describe('PostgresDataSource', () => {
       const result = await source.fetch(query)
       expect(result.type).toBe('news')
       expect(result.data).toEqual(articles)
+      expect(mockNewsFindMany).toHaveBeenCalledWith({
+        where: {
+          ticker: 'AAPL',
+          market: 'US',
+          publishedAt: { gte: expect.any(Date), lte: expect.any(Date) },
+        },
+        orderBy: { publishedAt: 'desc' },
+      })
     })
 
     it('throws when no articles exist', async () => {
@@ -127,6 +147,10 @@ describe('PostgresDataSource', () => {
       const result = await source.fetch(query)
       expect(result.type).toBe('technicals')
       expect(result.data).toEqual({ sma50: 150, rsi14: 55 })
+      expect(mockTechnicalsFindFirst).toHaveBeenCalledWith({
+        where: { ticker: 'AAPL', market: 'US' },
+        orderBy: { computedAt: 'desc' },
+      })
     })
 
     it('throws when no record exists', async () => {

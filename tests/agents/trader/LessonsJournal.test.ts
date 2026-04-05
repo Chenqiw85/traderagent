@@ -66,7 +66,7 @@ describe('LessonsJournal', () => {
     expect(docs[0]?.content).toContain('Wait for volume confirmation')
   })
 
-  it('retrieves lessons filtered by ticker and type', async () => {
+  it('retrieves lessons filtered by ticker, market, and type', async () => {
     const vs = mockVectorStore()
     const emb = mockEmbedder()
     vi.mocked(vs.search).mockResolvedValue([
@@ -78,16 +78,20 @@ describe('LessonsJournal', () => {
     ])
 
     const journal = new LessonsJournal({ vectorStore: vs, embedder: emb })
-    const results = await journal.retrieve('bullish signals AAPL', 'AAPL', 3)
+    const results = await journal.retrieve('bullish signals AAPL', 'AAPL', 'US', 3)
 
-    expect(vs.search).toHaveBeenCalledOnce()
+    expect(vs.search).toHaveBeenCalledWith(
+      expect.any(Array),
+      3,
+      { must: [{ ticker: 'AAPL' }, { market: 'US' }, { type: 'lesson' }] },
+    )
     expect(results).toHaveLength(1)
     expect(results[0]).toContain('RSI oversold')
   })
 
   it('returns empty array when no vector store', async () => {
     const journal = new LessonsJournal({})
-    const results = await journal.retrieve('test query', 'AAPL', 3)
+    const results = await journal.retrieve('test query', 'AAPL', 'US', 3)
     expect(results).toEqual([])
   })
 })

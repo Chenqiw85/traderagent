@@ -8,19 +8,20 @@ beforeEach(() => {
   process.env['ANTHROPIC_API_KEY'] = 'test-anthropic'
   process.env['GEMINI_API_KEY'] = 'test-gemini'
   process.env['DEEPSEEK_API_KEY'] = 'test-deepseek'
+  process.env['SILICONFLOW_API_KEY'] = 'test-siliconflow'
 })
 
 describe('LLMRegistry', () => {
-  it('resolves deepseek provider for manager', () => {
+  it('resolves siliconflow provider for manager', () => {
     const registry = new LLMRegistry(agentConfig)
     const provider = registry.get('manager')
-    expect(provider.name).toBe('deepseek')
+    expect(provider.name).toBe('siliconflow')
   })
 
-  it('resolves deepseek provider for bearResearcher', () => {
+  it('resolves siliconflow provider for bearResearcher', () => {
     const registry = new LLMRegistry(agentConfig)
     const provider = registry.get('bearResearcher')
-    expect(provider.name).toBe('deepseek')
+    expect(provider.name).toBe('siliconflow')
   })
 
   it('throws for unknown agent', () => {

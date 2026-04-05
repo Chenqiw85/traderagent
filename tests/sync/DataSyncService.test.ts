@@ -8,6 +8,7 @@ import { RateLimitedDataSource } from '../../src/data/RateLimitedDataSource.js'
 const mockOhlcvCreateMany = vi.fn()
 const mockFundamentalsCreate = vi.fn()
 const mockNewsCreateMany = vi.fn()
+const mockTechnicalsUpsert = vi.fn()
 const mockFetchLogCreate = vi.fn()
 const mockWatchlistFindMany = vi.fn()
 
@@ -16,6 +17,7 @@ vi.mock('../../src/db/client.js', () => ({
     ohlcv: { createMany: mockOhlcvCreateMany },
     fundamentals: { create: mockFundamentalsCreate },
     news: { createMany: mockNewsCreateMany },
+    technicals: { upsert: mockTechnicalsUpsert },
     fetchLog: { create: mockFetchLogCreate },
     watchlist: { findMany: mockWatchlistFindMany },
   },
@@ -30,6 +32,7 @@ function makeSource(name: string, fetchFn: (q: DataQuery) => Promise<DataResult>
 describe('DataSyncService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockTechnicalsUpsert.mockResolvedValue({})
   })
 
   it('fetches all data types for a ticker and logs success', async () => {
@@ -134,6 +137,8 @@ describe('DataSyncService', () => {
   })
 
   it('calls adjustRate on RateLimitedDataSource when 429 is received', async () => {
+    vi.useFakeTimers()
+
     let callCount = 0
     const inner = makeSource('adjustable', async (q) => {
       callCount++
@@ -152,9 +157,15 @@ describe('DataSyncService', () => {
     mockFetchLogCreate.mockResolvedValue({})
 
     const service = new DataSyncService([rateLimited], { maxRetries: 1, baseDelayMs: 1, rateLimitBackoffFloorMs: 10 })
-    await service.syncTicker('AAPL', 'US')
+    const syncPromise = service.syncTicker('AAPL', 'US')
+
+    // Advance past the rate-limit backoff delay and adjustRate cooldown timer
+    await vi.advanceTimersByTimeAsync(70_000)
+    await syncPromise
 
     expect(adjustSpy).toHaveBeenCalled()
+
+    vi.useRealTimers()
   })
 
   it('syncAll iterates all active watchlist tickers', async () => {
@@ -179,5 +190,63 @@ describe('DataSyncService', () => {
 
     expect(fetchedTickers).toContain('AAPL')
     expect(fetchedTickers).toContain('MSFT')
+  })
+
+  it('upserts technical indicators using a day-scoped key', async () => {
+    const technicalsSource = makeSource('technicals-source', async (q) => {
+      if (q.type === 'technicals') {
+        return {
+          ticker: q.ticker,
+          market: q.market,
+          type: q.type,
+          data: {
+            trend: { sma50: 150 },
+            risk: { beta: 1.1 },
+          },
+          fetchedAt: new Date('2026-04-05T12:00:00Z'),
+        }
+      }
+
+      return {
+        ticker: q.ticker,
+        market: q.market,
+        type: q.type,
+        data: [],
+        fetchedAt: new Date('2026-04-05T12:00:00Z'),
+      }
+    })
+
+    mockOhlcvCreateMany.mockResolvedValue({ count: 0 })
+    mockFundamentalsCreate.mockResolvedValue({})
+    mockNewsCreateMany.mockResolvedValue({ count: 0 })
+    mockFetchLogCreate.mockResolvedValue({})
+
+    const service = new DataSyncService([technicalsSource])
+    await service.syncTicker('AAPL', 'US')
+
+    expect(mockTechnicalsUpsert).toHaveBeenCalledWith({
+      where: {
+        ticker_market_date: {
+          ticker: 'AAPL',
+          market: 'US',
+          date: new Date('2026-04-05T00:00:00.000Z'),
+        },
+      },
+      create: {
+        ticker: 'AAPL',
+        market: 'US',
+        date: new Date('2026-04-05T00:00:00.000Z'),
+        indicators: {
+          trend: { sma50: 150 },
+          risk: { beta: 1.1 },
+        },
+      },
+      update: {
+        indicators: {
+          trend: { sma50: 150 },
+          risk: { beta: 1.1 },
+        },
+      },
+    })
   })
 })

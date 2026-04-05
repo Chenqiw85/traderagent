@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { BullResearcher } from '../../../src/agents/researcher/BullResearcher.js'
+import { BM25VectorStore } from '../../../src/rag/BM25VectorStore.js'
 import type { ILLMProvider } from '../../../src/llm/ILLMProvider.js'
 import type { IVectorStore } from '../../../src/rag/IVectorStore.js'
 import type { Embedder } from '../../../src/rag/embedder.js'
@@ -98,11 +99,30 @@ describe('BullResearcher', () => {
     expect(result.researchFindings[0].stance).toBe('neutral')
   })
 
-  it('throws when only vectorStore is provided without embedder', () => {
+  it('throws when only embedding-based vectorStore is provided without embedder', () => {
     const vs = mockVectorStore()
     expect(() => new BullResearcher({ llm: mockLLM('{}'), vectorStore: vs })).toThrow(
       'vectorStore and embedder must both be provided or both omitted'
     )
+  })
+
+  it('queries BM25 vector store without embedder', async () => {
+    const llm = mockLLM('{"stance":"bull","evidence":["test"],"confidence":0.7}')
+    const vs = new BM25VectorStore()
+    await vs.upsert([
+      {
+        id: '1',
+        content: 'AAPL has strong earnings momentum and bullish sentiment',
+        metadata: { ticker: 'AAPL', market: 'US', type: 'news' },
+      },
+    ])
+
+    const agent = new BullResearcher({ llm, vectorStore: vs })
+    await agent.run(emptyReport())
+
+    expect(llm.chat).toHaveBeenCalledOnce()
+    const systemPrompt = vi.mocked(llm.chat).mock.calls[0]?.[0]?.[0]?.content ?? ''
+    expect(systemPrompt).toContain('strong earnings momentum')
   })
 
   it('keeps lesson documents out of the generic market-doc budget', async () => {
@@ -129,5 +149,27 @@ describe('BullResearcher', () => {
     const systemPrompt = vi.mocked(llm.chat).mock.calls[0]?.[0]?.[0]?.content ?? ''
     expect(systemPrompt).toContain('Market Doc 1')
     expect(systemPrompt).not.toMatch(/Lesson A[\s\S]*Lesson A/)
+  })
+
+  it('scopes vector lookups by both ticker and market', async () => {
+    const llm = mockLLM('{"stance":"bull","evidence":["test"],"confidence":0.7}')
+    const vs = mockVectorStore()
+    const embedder = mockEmbedder()
+    const agent = new BullResearcher({ llm, vectorStore: vs, embedder })
+
+    await agent.run(emptyReport())
+
+    expect(vs.search).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Array),
+      10,
+      { must: [{ ticker: 'AAPL' }, { market: 'US' }] },
+    )
+    expect(vs.search).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Array),
+      3,
+      { must: [{ ticker: 'AAPL' }, { market: 'US' }, { type: 'lesson' }] },
+    )
   })
 })

@@ -1,34 +1,14 @@
-import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { DateFilteredDataSource } from '../data/DateFilteredDataSource.js'
-import { DataFetcher } from '../agents/data/DataFetcher.js'
-import { TechnicalAnalyzer } from '../agents/analyzer/TechnicalAnalyzer.js'
-import { BullResearcher } from '../agents/researcher/BullResearcher.js'
-import { BearResearcher } from '../agents/researcher/BearResearcher.js'
-import { NewsAnalyst } from '../agents/researcher/NewsAnalyst.js'
-import { FundamentalsAnalyst } from '../agents/researcher/FundamentalsAnalyst.js'
-import { RiskAnalyst } from '../agents/risk/RiskAnalyst.js'
-import { RiskManager } from '../agents/risk/RiskManager.js'
-import { Manager } from '../agents/manager/Manager.js'
+import { buildOrchestrator, resolveLLMMap } from '../orchestrator/OrchestratorFactory.js'
 import { LLMRegistry } from '../llm/registry.js'
-import { FinnhubSource } from '../data/finnhub.js'
-import { YFinanceSource } from '../data/yfinance.js'
-import { FallbackDataSource } from '../data/FallbackDataSource.js'
-import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
-import { rateLimitDefaults } from '../config/rateLimits.js'
-import { PostgresDataSource } from '../db/PostgresDataSource.js'
-import { QdrantVectorStore } from '../rag/qdrant.js'
-import { InMemoryVectorStore } from '../rag/InMemoryVectorStore.js'
-import { Embedder } from '../rag/embedder.js'
-import { OllamaEmbedder } from '../rag/OllamaEmbedder.js'
-import { agentConfig, detectRAGMode } from '../config/config.js'
+import { DEFAULT_PIPELINE_CONFIG, agentConfig, detectRAGMode } from '../config/config.js'
 import { TraderAgent } from '../agents/trader/TraderAgent.js'
 import type { Market } from '../agents/base/types.js'
-import type { IDataSource } from '../data/IDataSource.js'
 import { createLogger } from '../utils/logger.js'
+import { saveTrainerReport } from '../reports/TrainerReport.js'
+import { buildDataSourceChain, buildRAGDeps } from './bootstrap.js'
 
 const log = createLogger('cli:train')
-import type { IVectorStore } from '../rag/IVectorStore.js'
-import type { IEmbedder } from '../rag/IEmbedder.js'
 
 const VALID_MARKETS = new Set(['US', 'CN', 'HK'])
 const args = process.argv.slice(2)
@@ -63,37 +43,8 @@ if (!ticker || (marketArg != null && !VALID_MARKETS.has(marketArg))) {
 const market = (marketArg ?? 'US') as Market
 log.info({ ticker, market, maxPasses, lookbackMonths }, 'Trader Training')
 
-const dataSources: IDataSource[] = []
-if (process.env['DATABASE_URL']) {
-  dataSources.push(new PostgresDataSource())
-}
-if (process.env['FINNHUB_API_KEY']) {
-  dataSources.push(new RateLimitedDataSource(new FinnhubSource(), rateLimitDefaults['finnhub']))
-}
-dataSources.push(new RateLimitedDataSource(new YFinanceSource(), rateLimitDefaults['yfinance']))
-const fallbackSource = new FallbackDataSource('price-chain', dataSources)
-
-const ragMode = detectRAGMode()
-let vectorStore: IVectorStore | undefined
-let embedder: IEmbedder | undefined
-
-if (ragMode === 'qdrant') {
-  const qdrantUrl = process.env['QDRANT_URL']
-  const openaiKey = process.env['OPENAI_API_KEY']
-  if (!qdrantUrl || !openaiKey) {
-    log.error('Qdrant RAG mode requires QDRANT_URL and OPENAI_API_KEY')
-    process.exit(1)
-  }
-  vectorStore = new QdrantVectorStore({
-    url: qdrantUrl,
-    collectionName: 'traderagent',
-    vectorSize: 1536,
-  })
-  embedder = new Embedder({ apiKey: openaiKey })
-} else if (ragMode === 'memory') {
-  vectorStore = new InMemoryVectorStore()
-  embedder = new OllamaEmbedder({ model: 'nomic-embed-text' })
-}
+const fallbackSource = buildDataSourceChain('price-chain')
+const { ragMode, vectorStore, embedder } = buildRAGDeps()
 
 const endDate = new Date()
 const startDate = new Date()
@@ -130,35 +81,17 @@ if (ohlcvBars.length < 30) {
 }
 
 const registry = new LLMRegistry(agentConfig)
-const researcherConfig = { vectorStore, embedder }
+const llms = resolveLLMMap((agent) => registry.get(agent), 'trader')
 
-function createOrchestrator(cutoffDate: Date): Orchestrator {
+function createOrchestrator(cutoffDate: Date) {
   const filteredSource = new DateFilteredDataSource(fallbackSource, cutoffDate)
-  return new Orchestrator({
-    dataFetcher: new DataFetcher({
-      dataSources: [filteredSource],
-      vectorStore,
-      embedder,
-    }),
-    technicalAnalyzer: new TechnicalAnalyzer({ dataSource: filteredSource }),
-    researcherTeam: [
-      new BullResearcher({ llm: registry.get('traderPipelineBull'), ...researcherConfig }),
-      new BearResearcher({ llm: registry.get('traderPipelineBear'), ...researcherConfig }),
-      new NewsAnalyst({ llm: registry.get('traderPipelineNews'), ...researcherConfig }),
-      new FundamentalsAnalyst({
-        llm: registry.get('traderPipelineFundamentals'),
-        ...researcherConfig,
-      }),
-    ],
-    riskTeam: [
-      new RiskAnalyst({ llm: registry.get('traderPipelineRisk') }),
-      new RiskManager({ llm: registry.get('traderPipelineRiskMgr') }),
-    ],
-    manager: new Manager({
-      llm: registry.get('traderPipelineManager'),
-      vectorStore,
-      embedder,
-    }),
+  return buildOrchestrator({
+    llms,
+    pipelineConfig: { ...DEFAULT_PIPELINE_CONFIG, ragMode },
+    vectorStore,
+    embedder,
+    dataSource: filteredSource,
+    spyDataSource: filteredSource,
   })
 }
 
@@ -183,6 +116,17 @@ try {
 
   const finalScore = results[results.length - 1]?.avgTestScore ?? 0
   log.info({ finalScore: finalScore.toFixed(3) }, 'Training complete')
+
+  // Save markdown report
+  const reportPath = saveTrainerReport({
+    ticker,
+    market,
+    maxPasses,
+    lookbackMonths,
+    evaluationDays: 5,
+    results,
+  })
+  log.info({ path: reportPath }, 'Training report saved')
 } catch (error) {
   log.error({ error: (error as Error).message }, 'Training failed')
   process.exit(1)

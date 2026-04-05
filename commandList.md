@@ -23,6 +23,15 @@ npm run run:analyze -- 600519 CN
 
 The analysis pipeline produces a 5-tier recommendation: **BUY**, **OVERWEIGHT**, **HOLD**, **UNDERWEIGHT**, or **SELL** with confidence score, stop loss, and take profit levels.
 
+The live pipeline now surfaces explicit decision stages:
+- `Research Thesis`
+- `Trader Proposal`
+- `Risk Verdict`
+- final 5-tier decision
+
+A markdown report is automatically saved to `reports/AAPL_US_<timestamp>.md`.
+If `DATABASE_URL` is set, the run is also persisted to Postgres as an `AnalysisRun` plus per-stage `AnalysisStage` artifacts.
+
 ## Trader Training
 
 ```bash
@@ -42,6 +51,8 @@ npm run trader:train -- AAPL US --passes 4 --lookback 12
 
 Training uses the Backtester with look-ahead bias prevention (DateFilteredDataSource), scores decisions with the CompositeScorer, extracts lessons via LLM, and runs structured reflections on the worst-performing decisions.
 
+A markdown report is automatically saved to `reports/training_AAPL_US_<timestamp>.md`.
+
 ## Watchlist
 
 ```bash
@@ -60,14 +71,22 @@ npm run watchlist:list
 ## Advisor
 
 ```bash
-# Run daily advisor analysis for all watchlist tickers
-npm run advisor:run
+# Run advisor once for all watchlist tickers
+npm run advisor
 
-# Run advisor and send report via WhatsApp
-npm run advisor:run -- --whatsapp
+# Run advisor once for specific tickers
+npm run advisor -- AAPL,TSLA US
+
+# Run advisor in dry-run mode (skip WhatsApp connect/send)
+npm run advisor -- --dry-run
+
+# Start the advisor scheduler
+npm run advisor:schedule
 ```
 
-The advisor analyzes market indices (SPY, QQQ, DIA, VIX, FXI, KWEB, MCHI), runs the full pipeline on each watchlist ticker, and synthesizes a daily market briefing.
+The advisor analyzes market indices (SPY, QQQ, DIA, VIX, FXI, KWEB, MCHI), runs the full pipeline on each watchlist ticker, and synthesizes a market briefing. WhatsApp delivery is configured via environment variables, not a `--whatsapp` flag.
+
+A markdown report is automatically saved to `reports/advisor_<timestamp>.md`.
 
 ## Data Sync
 
@@ -122,25 +141,44 @@ npm run test
 npm run test:watch
 ```
 
+## Reports
+
+All commands automatically generate markdown reports in the `reports/` directory:
+
+```
+reports/
+├── AAPL_US_2026-04-05_1030.md           # Single stock analysis
+├── training_AAPL_US_2026-04-05_1030.md  # Training results
+└── advisor_2026-04-05_1630.md           # Daily advisor briefing
+```
+
+Reports include:
+- **Analysis:** 5-tier decision, research thesis, trader proposal, risk verdict, technical indicators, research findings, risk assessment
+- **Training:** Per-pass scores, win rates, action breakdowns, lesson counts, improvement tracking
+- **Advisor:** Market index overview, ticker recommendations table, detailed reasoning, summary
+
+The `reports/` directory is git-ignored and created automatically on first run.
+
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | For analysis | DeepSeek API key (via SiliconFlow) for research + risk + manager agents |
-| `DATABASE_URL` | For DB features | PostgreSQL connection string |
+| `SILICONFLOW_API_KEY` | For analysis | SiliconFlow API key for research, trade planner, risk, and manager agents |
+| `DATABASE_URL` | For DB features | PostgreSQL connection string for cache tables plus `AnalysisRun` / `AnalysisStage` persistence |
 | `FINNHUB_API_KEY` | No | Finnhub API key (adds Finnhub to data sources) |
 | `OPENAI_API_KEY` | For Qdrant RAG | OpenAI API key for embeddings |
 | `QDRANT_URL` | For Qdrant RAG | Qdrant vector database URL |
-| `OLLAMA_HOST` | For local RAG | Ollama host for local embeddings (default: `http://localhost:11434`) |
+| `OLLAMA_HOST` | For local RAG | Enables local BM25-backed RAG mode detection (default host: `http://localhost:11434`) |
 | `RAG_BM25` | No | Set to `true` for BM25 keyword-based RAG (no API keys needed) |
 | `ANTHROPIC_API_KEY` | No | Anthropic Claude API key (alternative LLM) |
 | `GEMINI_API_KEY` | No | Google Gemini API key (alternative LLM) |
 | `OUTPUT_LANGUAGE` | No | Output language: `en` (default), `zh`, `zh-TW`, `ja`, `ko` |
+| `ADVISOR_WHATSAPP_TO` | No | Destination number for advisor WhatsApp delivery |
 
 ### RAG Modes (auto-detected)
 
 - **Full:** `OPENAI_API_KEY` + `QDRANT_URL` set -> Qdrant + OpenAI embeddings
-- **In-memory:** `OLLAMA_HOST` set -> local store + Ollama embeddings
+- **In-memory:** `OLLAMA_HOST` set -> local BM25 keyword-search store
 - **BM25:** `RAG_BM25=true` -> keyword-based text search (no API keys, fully offline)
 - **Disabled:** none of the above set
 
@@ -153,6 +191,6 @@ These features are configured programmatically via `PipelineConfig` in `src/conf
 | `enabledAnalysts` | `['bull', 'bear', 'news', 'fundamentals']` | Select which analysts run |
 | `debateEnabled` | `false` | Enable Bull vs Bear adversarial debate |
 | `maxDebateRounds` | `2` | Number of debate rounds |
-| `riskDebateEnabled` | `false` | Enable Aggressive/Conservative/Neutral risk debate |
+| `riskDebateEnabled` | `false` | Enable Aggressive/Conservative/Neutral risk debate with proposal-aware `PortfolioManager` synthesis |
 | `outputLanguage` | `'en'` | Output language for all LLM responses |
 | `ragMode` | auto-detected | Override RAG mode |

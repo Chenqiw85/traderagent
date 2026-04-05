@@ -1,5 +1,5 @@
 import type { Orchestrator } from '../../orchestrator/Orchestrator.js'
-import type { Decision, Market } from '../base/types.js'
+import { ACTION_DIRECTION, type Decision, type Market } from '../base/types.js'
 import type { OhlcvBar, ScoredDecision } from './types.js'
 import type { CompositeScorer } from './CompositeScorer.js'
 import { createLogger } from '../../utils/logger.js'
@@ -89,15 +89,20 @@ export class Backtester {
     outcome: PriceOutcome,
   ): ScoredDecision {
     const { breakdown, compositeScore } = this.scorer.score(decision, outcome)
+    const direction = ACTION_DIRECTION[decision.action]
+    const isBullish = direction > 0
+    const isBearish = direction < 0
     const hitTakeProfit =
+      direction !== 0 &&
       decision.takeProfit != null &&
       outcome.closePrices.some((price) =>
-        decision.action === 'BUY' ? price >= decision.takeProfit! : price <= decision.takeProfit!,
+        isBullish ? price >= decision.takeProfit! : isBearish && price <= decision.takeProfit!,
       )
     const hitStopLoss =
+      direction !== 0 &&
       decision.stopLoss != null &&
       outcome.closePrices.some((price) =>
-        decision.action === 'BUY' ? price <= decision.stopLoss! : price >= decision.stopLoss!,
+        isBullish ? price <= decision.stopLoss! : isBearish && price >= decision.stopLoss!,
       )
 
     return {

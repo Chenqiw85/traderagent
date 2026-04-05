@@ -2,26 +2,31 @@ TraderAgent Project Guide
 
   What This Is
 
-  A multi-agent trading analysis system that fetches market data, runs it through specialized AI agents (bull researcher, bear
-  researcher, news analyst, fundamentals analyst, risk team), and produces a final 5-tier recommendation
-  (BUY/OVERWEIGHT/HOLD/UNDERWEIGHT/SELL) with confidence score, stop loss, and take profit levels.
+  A multi-agent trading analysis system that fetches market data, runs it through specialized AI agents, and moves through an
+  explicit live decision flow:
+
+  `research findings -> research thesis -> trader proposal -> risk verdict -> final 5-tier decision`
+
+  The final output is a recommendation in the 5-tier scale
+  (BUY/OVERWEIGHT/HOLD/UNDERWEIGHT/SELL) with confidence score, stop loss, and take profit levels. When `DATABASE_URL` is set,
+  live analysis runs are also persisted to Postgres with per-stage artifacts and a structured snapshot.
 
   Architecture
 
                            ┌─────────────────┐
-                           │   Orchestrator   │  — 5-stage pipeline
+                           │   Orchestrator   │  — live decision pipeline
                            └────────┬────────┘
-             ┌──────────────────────┼──────────────────────┐
-             │                      │                      │
-      ┌──────┴──────┐     ┌────────┴────────┐    ┌────────┴────────┐
-      │ Stage 1 + 2 │     │    Stage 3      │    │  Stage 4 + 5    │
-      │ DataFetcher  │     │ Researcher Team │    │ Risk + Manager  │
-      │ + Technical  │     │ (parallel or    │    │  (sequential or │
-      │  Analyzer    │     │  debate mode)   │    │   debate mode)  │
-      └──────────────┘     └─────────────────┘    └─────────────────┘
+             ┌──────────────────────────────────────────────────────────────────────────────┐
+             │                                                                              │
+      ┌──────┴──────┐     ┌────────┴────────┐    ┌────────┴────────┐    ┌────────┴────────┐
+      │ Stage 1 + 2 │     │ Stage 3 + 4     │    │    Stage 5      │    │   Stage 6 + 7   │
+      │ DataFetcher  │     │ Research Team + │    │  TradePlanner   │    │ Risk Team +     │
+      │ + Technical  │     │ ResearchManager │    │                 │    │ Final Manager   │
+      │  Analyzer    │     │                 │    │                 │    │                 │
+      └──────────────┘     └─────────────────┘    └─────────────────┘    └─────────────────┘
 
   Pipeline stages:
-  1. DataFetcher — pulls OHLCV, news, fundamentals from data sources; chunks + embeds into vector store
+  1. DataFetcher — pulls OHLCV, news, fundamentals from the configured data-source chain and stores retrievable context
   2. TechnicalAnalyzer — computes RSI, MACD, Bollinger, ATR, VaR, beta, etc. from raw OHLCV
   3. Researcher Team — configurable analysts with optional debate mode:
     - BullResearcher — looks for bullish signals
@@ -29,11 +34,15 @@ TraderAgent Project Guide
     - NewsAnalyst — analyzes recent news sentiment
     - FundamentalsAnalyst — evaluates PE, PB, EPS, etc.
     - DebateEngine (optional) — Bull and Bear counter each other's arguments over configurable rounds
-    - ResearchManager (optional) — synthesizes debate into a balanced investment thesis
-  4. Risk Team — two modes:
-    - Classic: RiskAnalyst classifies risk level, RiskManager sets position limits
-    - Debate: Aggressive/Conservative/Neutral risk analysts debate, PortfolioManager synthesizes
-  5. Manager — weighs all findings, produces final Decision (5-tier action, confidence, stopLoss, takeProfit)
+  4. ResearchManager — synthesizes findings or debate output into a structured `researchThesis`
+  5. TradePlanner — converts the thesis into a concrete `traderProposal` with entry logic, why-now, time horizon, invalidation, and sizing intent
+  6. Risk Team — two modes:
+    - Classic: RiskAnalyst classifies base risk, RiskManager reviews the concrete proposal and emits `riskVerdict`
+    - Debate: Aggressive/Conservative/Neutral risk analysts run in parallel, PortfolioManager synthesizes them while also evaluating the `traderProposal` and `researchThesis`
+  7. Manager — reads the thesis, proposal, and risk verdict, then produces the final Decision (5-tier action, confidence, stopLoss, takeProfit)
+
+  The shared `TradingReport` now keeps these intermediate decision objects as first-class state so downstream stages do not have
+  to reconstruct them from raw findings.
 
   5-Tier Rating Scale
 
@@ -54,7 +63,7 @@ TraderAgent Project Guide
        Round 1: Bull argues → Bear rebuts → Bull rebuts Bear
        Round 2: Repeat with stronger arguments
        ...
-       ResearchManager synthesizes debate into a balanced Finding
+       ResearchManager synthesizes debate into a structured ResearchThesis
 
   This prevents confirmation bias by forcing each side to address the other's evidence directly.
   Configurable via `maxDebateRounds` (default: 2).
@@ -73,7 +82,7 @@ TraderAgent Project Guide
                         │  Manager       │
                         └────────────────┘
 
-  The PortfolioManager synthesizes all three viewpoints into a balanced risk assessment.
+  The PortfolioManager synthesizes all three viewpoints into a balanced risk assessment and proposal-aware risk verdict.
 
   Key Interfaces
 
@@ -100,7 +109,11 @@ TraderAgent Project Guide
   - ActionTier — 'BUY' | 'OVERWEIGHT' | 'HOLD' | 'UNDERWEIGHT' | 'SELL'
   - Decision — final output: action (ActionTier), confidence, reasoning, stopLoss, takeProfit
   - Finding — each researcher's output: stance, evidence, confidence
+  - ResearchThesis — synthesized stance, key drivers, key risks, invalidation conditions, time horizon
+  - TraderProposal — concrete trade plan with action bias, entry logic, why-now, and invalidation
   - RiskAssessment — risk level + metrics (VaR, volatility, beta, maxDrawdown)
+  - RiskVerdict — approval state, blockers, required adjustments
+  - AnalysisArtifact — structured per-stage artifact stored in `analysisArtifacts`
   - Market — 'US' | 'CN' | 'HK'
 
   Pipeline Configuration
@@ -112,9 +125,9 @@ TraderAgent Project Guide
   | enabledAnalysts   | string[]   | all 4   | Which analysts to run: bull, bear, news, fundamentals |
   | debateEnabled     | boolean    | false   | Enable Bull vs Bear adversarial debate rounds     |
   | maxDebateRounds   | number     | 2       | Number of debate rounds when debate is enabled    |
-  | riskDebateEnabled | boolean    | false   | Enable 3-way risk analyst debate + PortfolioManager |
+  | riskDebateEnabled | boolean    | false   | Enable 3-way risk analyst debate + proposal-aware PortfolioManager |
   | outputLanguage    | string     | 'en'    | Output language: 'en', 'zh', 'ja', 'ko', etc.    |
-  | ragMode           | RAGMode    | auto    | 'qdrant', 'memory', 'bm25', or 'disabled'        |
+  | ragMode           | RAGMode    | auto    | 'qdrant', 'memory', or 'disabled'                |
 
   Use buildOrchestrator() from src/orchestrator/OrchestratorFactory.ts to wire everything together
   based on a PipelineConfig.
@@ -126,9 +139,9 @@ TraderAgent Project Guide
        ┌──────────────────┬──────────┬───────────────────┬──────────────────────────────────────────────┐
        │   Agent Group    │ Provider │       Model       │                  Rationale                   │
        ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
-       │ Research team    │ DeepSeek │ deepseek-chat     │ Fast, cost-effective for evidence gathering  │
+       │ Research team    │ SiliconFlow │ DeepSeek-V3    │ Fast, cost-effective for evidence gathering  │
        ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
-       │ Risk + Manager   │ DeepSeek │ deepseek-reasoner │ Deep chain-of-thought for critical decisions │
+       │ Trade + Risk + Manager │ SiliconFlow │ DeepSeek-V3 │ Higher-quality synthesis for planning and decisions │
        ├──────────────────┼──────────┼───────────────────┼──────────────────────────────────────────────┤
        │ Trainer pipeline │ Ollama   │ llama3.1          │ Local, free for iterative backtesting        │
        └──────────────────┴──────────┴───────────────────┴──────────────────────────────────────────────┘
@@ -151,13 +164,11 @@ TraderAgent Project Guide
 
   Auto-detected via detectRAGMode():
   - qdrant mode: Qdrant vector DB + OpenAI embeddings (needs QDRANT_URL + OPENAI_API_KEY)
-  - memory mode: In-memory vector store + Ollama embeddings (needs OLLAMA_HOST)
-  - bm25 mode: BM25 keyword search — no API keys needed, offline text retrieval (set RAG_BM25=true)
+  - memory mode: local BM25 keyword search for offline/local RAG (enabled by OLLAMA_HOST or RAG_BM25=true)
   - disabled: no RAG, agents work without context retrieval
 
-  BM25 Memory System: A pure TypeScript BM25 implementation (src/rag/BM25Index.ts) provides keyword-based
-  document retrieval without embeddings or API calls. BM25VectorStore implements the IVectorStore interface,
-  making it a drop-in fallback when no embedding API is available.
+  Local Memory System: a pure TypeScript BM25 implementation (src/rag/BM25Index.ts) provides keyword-based
+  document retrieval without embeddings or API calls. BM25VectorStore is the local/offline retrieval backend.
 
   RAG stores chunked market data and learned lessons from the trader training loop.
 
@@ -207,6 +218,27 @@ TraderAgent Project Guide
   - Fundamentals, News, Technicals — cached research data
   - FetchLog — data source fetch audit trail
   - BacktestRun, BacktestDecision, Lesson — trader training results
+  - AnalysisRun — one live analysis execution with status, final action/confidence, and a structured snapshot
+  - AnalysisStage — per-stage persisted artifacts (`research`, `trade`, `risk`, `final`) linked to an `AnalysisRun`
+
+  Markdown Reports
+
+  Every CLI command automatically saves a markdown report to the reports/ directory:
+
+  | Command           | Report File                              | Contents                                  |
+  |-------------------|------------------------------------------|-------------------------------------------|
+  | run:analyze       | reports/AAPL_US_2026-04-05_1030.md       | Decision, thesis, trader proposal, risk verdict, indicators |
+  | trader:train      | reports/training_AAPL_US_2026-04-05.md   | Pass scores, win rates, lesson counts     |
+  | advisor           | reports/advisor_2026-04-05_1030.md        | Market overview, recommendations, summary |
+
+  Reports are git-ignored. The reports/ directory is created automatically on first run.
+
+  Live Analysis Output
+
+  `npm run run:analyze -- <TICKER> [MARKET]` now exposes the staged decision flow in three places:
+  - Console output: `Research Thesis`, `Trader Proposal`, and `Risk Verdict` summaries appear before the final decision block
+  - Markdown report: dedicated sections for `Research Thesis`, `Trader Proposal`, and `Risk Verdict`
+  - Postgres: when `DATABASE_URL` is set, the run is persisted as an `AnalysisRun` plus `AnalysisStage` rows, including partial state when a run fails after earlier stages completed
 
   CLI Commands
 
@@ -221,7 +253,13 @@ TraderAgent Project Guide
         ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
         │ npm run watchlist:list                                   │ Show watchlist                          │
         ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
-        │ npm run db:sync -- AAPL US                               │ Sync market data to Postgres            │
+        │ npm run advisor                                          │ Run advisor once for the DB watchlist   │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run advisor -- AAPL,TSLA US                          │ Run advisor once for explicit tickers   │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run advisor:schedule                                 │ Start advisor cron scheduler            │
+        ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
+        │ npm run db:sync -- --ticker AAPL US                      │ Sync one ticker into Postgres           │
         ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
         │ npm run scheduler:start                                  │ Start cron-based auto-sync              │
         ├──────────────────────────────────────────────────────────┼─────────────────────────────────────────┤
@@ -233,16 +271,16 @@ TraderAgent Project Guide
   Environment Variables
 
   # Required for production analysis
-  DEEPSEEK_API_KEY=...          # Research + risk + manager agents
+  SILICONFLOW_API_KEY=...       # Research + risk + manager agents
 
   # Optional — data sources
-  DATABASE_URL=...              # PostgreSQL (docker-compose provides one)
+  DATABASE_URL=...              # PostgreSQL cache + live AnalysisRun/AnalysisStage persistence
   FINNHUB_API_KEY=...           # Finnhub market data
 
   # Optional — RAG (pick one)
   QDRANT_URL=... + OPENAI_API_KEY=...   # Full RAG mode (Qdrant + OpenAI embeddings)
-  OLLAMA_HOST=http://localhost:11434    # Local RAG mode (in-memory + Ollama embeddings)
-  RAG_BM25=true                         # BM25 keyword search mode (no API keys needed)
+  OLLAMA_HOST=http://localhost:11434    # Local/offline RAG mode (BM25 keyword search)
+  RAG_BM25=true                         # Explicitly force local/offline BM25 mode
 
   # Optional — alternative LLMs
   ANTHROPIC_API_KEY=...
@@ -257,7 +295,7 @@ TraderAgent Project Guide
   docker compose up -d
 
   # 2. Set up env
-  cp .env.example .env  # fill in DEEPSEEK_API_KEY at minimum
+  cp .env.example .env  # fill in SILICONFLOW_API_KEY at minimum
 
   # 3. Database
   npm run db:generate
@@ -266,7 +304,7 @@ TraderAgent Project Guide
   # 4. Run analysis
   npm run run:analyze -- AAPL US
 
-  # 5. Train trader (optional — needs Ollama running)
+  # 5. Train trader (optional)
   npm run trader:train -- AAPL US
 
   Project Structure
@@ -276,24 +314,27 @@ TraderAgent Project Guide
      │   ├── base/           IAgent, types (TradingReport, Decision, Finding, ActionTier...)
      │   ├── data/           DataFetcher (stage 1)
      │   ├── analyzer/       TechnicalAnalyzer (stage 2)
-     │   ├── researcher/     BaseResearcher, Bull/Bear/News/Fundamentals, DebateEngine, ResearchManager (stage 3)
-     │   ├── risk/           RiskAnalyst, RiskManager, Aggressive/Conservative/Neutral analysts, PortfolioManager (stage 4)
-     │   ├── manager/        Manager (stage 5)
+     │   ├── researcher/     BaseResearcher, Bull/Bear/News/Fundamentals, DebateEngine, ResearchManager (stages 3-4)
+     │   ├── trader/         TradePlanner, TraderAgent, Backtester, CompositeScorer, LessonExtractor, LessonsJournal, ReflectionEngine
+     │   ├── risk/           RiskAnalyst, RiskManager, Aggressive/Conservative/Neutral analysts, PortfolioManager (stage 6)
+     │   ├── manager/        Manager (stage 7)
      │   ├── advisor/        AdvisorAgent, MarketTrendAnalyzer, AdvisorScheduler
-     │   └── trader/         TraderAgent, Backtester, CompositeScorer, LessonExtractor, LessonsJournal, ReflectionEngine
      ├── cli/                Entry points: run, train, sync, watchlist, scheduler, advisor
+     ├── analysis/           Setup-aware retrieval helpers and AnalysisRun persistence
      ├── config/             Agent LLM config, PipelineConfig, rate limit config
      ├── data/               Data source implementations (Finnhub, YFinance, Polygon, DateFilteredDataSource, etc.)
      ├── db/                 Prisma client, PostgresDataSource
      ├── evaluation/         Accuracy/Backtest/Reasoning evaluators
      ├── indicators/         Technical indicator calculations (RSI, MACD, Bollinger, etc.)
      ├── llm/                LLM providers (OpenAI, Anthropic, Gemini, Ollama, DeepSeek, SiliconFlow) + registry + normalizeResponse
-     ├── orchestrator/       Orchestrator (5-stage pipeline with debate support) + OrchestratorFactory
-     ├── rag/                Vector store (Qdrant, InMemory, BM25), embedders, chunker
+     ├── orchestrator/       Orchestrator (live decision pipeline with staged report updates) + OrchestratorFactory
+     ├── rag/                Retrieval backends (Qdrant, BM25), embedders, chunker
+     ├── reports/            Markdown report generators (AnalysisReport, AdvisorReport, TrainerReport)
      ├── sync/               DataSyncService, Scheduler
      ├── messaging/          WhatsApp message sender
      └── utils/              parseJson, logger (Pino), i18n, errors, normalizeOhlcv
-     tests/                  57 test files, 274 tests
+     tests/                  automated test suite
+     reports/                Generated markdown reports (git-ignored)
 
 
 Reference:

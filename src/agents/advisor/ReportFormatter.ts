@@ -10,8 +10,10 @@ const DIRECTION_ICON: Record<MarketTrend['direction'], string> = {
 
 const ACTION_ICON: Record<string, string> = {
   BUY: '🟢 BUY',
-  SELL: '🔴 SELL',
+  OVERWEIGHT: '🔵 OVERWEIGHT',
   HOLD: '🟡 HOLD',
+  UNDERWEIGHT: '🟠 UNDERWEIGHT',
+  SELL: '🔴 SELL',
 }
 
 export function formatAdvisorReport(report: AdvisorReport): string {

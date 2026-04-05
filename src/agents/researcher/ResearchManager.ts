@@ -1,7 +1,7 @@
 // src/agents/researcher/ResearchManager.ts
 
 import type { IAgent } from '../base/IAgent.js'
-import type { AgentRole, Finding, TradingReport } from '../base/types.js'
+import type { AgentRole, AnalysisArtifact, Finding, ResearchThesis, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
@@ -13,11 +13,48 @@ type ResearchManagerConfig = {
   llm: ILLMProvider
 }
 
-type SynthesizedFinding = {
+type SynthesizedThesis = {
   stance: 'bull' | 'bear' | 'neutral'
-  evidence: string[]
   confidence: number
-  reasoning: string
+  summary: string
+  keyDrivers: string[]
+  keyRisks: string[]
+  invalidationConditions: string[]
+  timeHorizon: ResearchThesis['timeHorizon']
+}
+
+const VALID_STANCES = ['bull', 'bear', 'neutral'] as const
+const VALID_TIME_HORIZONS = ['short', 'swing', 'position'] as const
+
+function isValidStance(value: unknown): value is ResearchThesis['stance'] {
+  return typeof value === 'string' && VALID_STANCES.includes(value as ResearchThesis['stance'])
+}
+
+function isValidTimeHorizon(value: unknown): value is ResearchThesis['timeHorizon'] {
+  return typeof value === 'string' && VALID_TIME_HORIZONS.includes(value as ResearchThesis['timeHorizon'])
+}
+
+function normalizeConfidence(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) return fallback
+  return value
+}
+
+function normalizeSummary(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : ''
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+}
+
+function isThesisObject(value: unknown): value is Partial<SynthesizedThesis> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -37,18 +74,33 @@ export class ResearchManager implements IAgent {
   async run(report: TradingReport): Promise<TradingReport> {
     if (report.researchFindings.length === 0) return report
 
-    const synthesized = await this.synthesize(report)
+    const thesis = await this.synthesize(report)
+    const summary = thesis.summary.trim()
+    const evidence = [summary, ...thesis.keyDrivers.slice(0, 2)]
+      .filter((item) => item.length > 0)
+    const compatibilityFinding: Finding = {
+      agentName: this.name,
+      stance: thesis.stance,
+      evidence,
+      confidence: thesis.confidence,
+      sentiment: thesis.summary,
+    }
+    const analysisArtifact: AnalysisArtifact = {
+      stage: 'research',
+      agent: this.name,
+      summary: thesis.summary,
+      payload: thesis,
+    }
 
     return {
       ...report,
-      researchFindings: [
-        ...report.researchFindings,
-        synthesized,
-      ],
+      researchThesis: thesis,
+      researchFindings: [...report.researchFindings, compatibilityFinding],
+      analysisArtifacts: [...(report.analysisArtifacts ?? []), analysisArtifact],
     }
   }
 
-  private async synthesize(report: TradingReport): Promise<Finding> {
+  private async synthesize(report: TradingReport): Promise<ResearchThesis> {
     const bullFindings = report.researchFindings.filter((f) => f.stance === 'bull')
     const bearFindings = report.researchFindings.filter((f) => f.stance === 'bear')
     const otherFindings = report.researchFindings.filter((f) => f.stance === 'neutral')
@@ -71,15 +123,19 @@ ${otherFindings.length > 0 ? `OTHER ANALYSIS:\n${formatFindings(otherFindings)}`
 INSTRUCTIONS:
 - Weigh the strength of evidence from both sides
 - Identify which arguments are supported by data vs speculation
-- Determine the overall investment stance
-- Your confidence should reflect how decisive the debate was
+- Determine the overall investment stance and write a concise thesis summary
+- Identify the most important drivers, risks, and invalidation conditions
+- Choose a realistic time horizon for the thesis
 
 Respond with ONLY a JSON object:
 {
   "stance": "bull" | "bear" | "neutral",
-  "evidence": ["<key point 1 from synthesis>", "<key point 2>", "..."],
   "confidence": <number 0-1>,
-  "reasoning": "<brief explanation of why this side won the debate>"
+  "summary": "<concise thesis paragraph>",
+  "keyDrivers": ["<driver 1>", "<driver 2>", "..."],
+  "keyRisks": ["<risk 1>", "<risk 2>", "..."],
+  "invalidationConditions": ["<condition 1>", "<condition 2>", "..."],
+  "timeHorizon": "short" | "swing" | "position"
 }`)
 
     try {
@@ -88,26 +144,33 @@ Respond with ONLY a JSON object:
         { role: 'user', content: `Synthesize the debate for ${report.ticker}. JSON only.` },
       ])
 
-      const parsed = parseJson<Partial<SynthesizedFinding>>(response)
-      const validStances = ['bull', 'bear', 'neutral'] as const
-      const stance: Finding['stance'] = validStances.includes(parsed.stance as Finding['stance'])
-        ? (parsed.stance as Finding['stance'])
-        : 'neutral'
+      const parsed = parseJson<unknown>(response)
+      if (!isThesisObject(parsed)) {
+        throw new Error('LLM response must be a JSON object')
+      }
+
+      const stance: ResearchThesis['stance'] = isValidStance(parsed.stance) ? parsed.stance : 'neutral'
+      const timeHorizon: ResearchThesis['timeHorizon'] = isValidTimeHorizon(parsed.timeHorizon) ? parsed.timeHorizon : 'short'
 
       return {
-        agentName: this.name,
         stance,
-        evidence: parsed.evidence ?? [],
-        confidence: Math.min(1, Math.max(0, parsed.confidence ?? 0.5)),
-        sentiment: parsed.reasoning,
+        confidence: normalizeConfidence(parsed.confidence, 0.5),
+        summary: normalizeSummary(parsed.summary),
+        keyDrivers: normalizeStringArray(parsed.keyDrivers),
+        keyRisks: normalizeStringArray(parsed.keyRisks),
+        invalidationConditions: normalizeStringArray(parsed.invalidationConditions),
+        timeHorizon,
       }
     } catch (err) {
       log.error({ error: err instanceof Error ? err.message : String(err) }, 'Synthesis failed')
       return {
-        agentName: this.name,
         stance: 'neutral',
-        evidence: ['Research synthesis was unable to complete'],
         confidence: 0,
+        summary: '',
+        keyDrivers: [],
+        keyRisks: [],
+        invalidationConditions: [],
+        timeHorizon: 'short',
       }
     }
   }

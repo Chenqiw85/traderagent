@@ -7,6 +7,7 @@ type OrchestratorConfig = {
   dataFetcher?: IAgent
   technicalAnalyzer?: IAgent
   researcherTeam: IAgent[]
+  tradePlanner?: IAgent
   riskTeam: IAgent[]
   manager: IAgent
   /** Optional: Bull researcher for debate mode (must be in researcherTeam too) */
@@ -23,12 +24,14 @@ type OrchestratorConfig = {
 
 type RunContext = {
   timestamp?: Date
+  onReportUpdate?: (report: TradingReport) => void | Promise<void>
 }
 
 export class Orchestrator {
   private dataFetcher?: IAgent
   private technicalAnalyzer?: IAgent
   private researcherTeam: IAgent[]
+  private tradePlanner?: IAgent
   private riskTeam: IAgent[]
   private manager: IAgent
   private bullResearcher?: IAgent
@@ -41,6 +44,7 @@ export class Orchestrator {
     this.dataFetcher = config.dataFetcher
     this.technicalAnalyzer = config.technicalAnalyzer
     this.researcherTeam = config.researcherTeam
+    this.tradePlanner = config.tradePlanner
     this.riskTeam = config.riskTeam
     this.manager = config.manager
     this.bullResearcher = config.bullResearcher
@@ -57,16 +61,19 @@ export class Orchestrator {
       timestamp: context.timestamp ?? new Date(),
       rawData: [],
       researchFindings: [],
+      analysisArtifacts: [],
     }
 
     // Stage 1: Fetch data
     if (this.dataFetcher) {
       report = await this.dataFetcher.run(report)
+      await this.publishReportUpdate(context, report)
     }
 
     // Stage 2: Compute technical indicators
     if (this.technicalAnalyzer) {
       report = await this.technicalAnalyzer.run(report)
+      await this.publishReportUpdate(context, report)
     }
 
     // Stage 3: Research — parallel or debate mode
@@ -75,16 +82,37 @@ export class Orchestrator {
     } else if (this.researcherTeam.length > 0) {
       report = await this.runParallelResearch(report)
     }
+    await this.publishReportUpdate(context, report)
 
-    // Stage 4: Risk team — sequential (or debate if configured via riskTeam)
-    for (const agent of this.riskTeam) {
-      report = await agent.run(report)
+    // Stage 3b: Research manager — synthesizes a thesis when available
+    if (this.researchManager && !(this.debateEngine && this.bullResearcher && this.bearResearcher)) {
+      report = await this.researchManager.run(report)
+      await this.publishReportUpdate(context, report)
     }
 
-    // Stage 5: Manager — reads full report, outputs final decision
+    // Stage 4: Trade planner — converts thesis into an executable proposal
+    if (this.tradePlanner) {
+      report = await this.tradePlanner.run(report)
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 5: Risk team — sequential (or debate if configured via riskTeam)
+    for (const agent of this.riskTeam) {
+      report = await agent.run(report)
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 6: Manager — reads full report, outputs final decision
     report = await this.manager.run(report)
+    await this.publishReportUpdate(context, report)
 
     return report
+  }
+
+  private async publishReportUpdate(context: RunContext, report: TradingReport): Promise<void> {
+    if (context.onReportUpdate) {
+      await context.onReportUpdate(report)
+    }
   }
 
   private async runParallelResearch(report: TradingReport): Promise<TradingReport> {

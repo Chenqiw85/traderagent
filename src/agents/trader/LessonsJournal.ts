@@ -1,4 +1,4 @@
-import type { IVectorStore, Document } from '../../rag/IVectorStore.js'
+import { supportsTextSearch, type IVectorStore, type Document } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import type { LessonEntry } from './types.js'
 import { createLogger } from '../../utils/logger.js'
@@ -20,12 +20,16 @@ export class LessonsJournal {
   }
 
   async store(lessons: LessonEntry[]): Promise<void> {
-    if (!this.vectorStore || !this.embedder || lessons.length === 0) return
+    if (!this.vectorStore || lessons.length === 0) return
 
     const texts = lessons.map((lesson) => this.buildContent(lesson))
-    const embeddings = await this.embedder.embedBatch(texts)
+    const embeddings = supportsTextSearch(this.vectorStore)
+      ? texts.map(() => undefined)
+      : this.embedder
+        ? await this.embedder.embedBatch(texts)
+        : []
 
-    if (embeddings.length !== texts.length) {
+    if (!supportsTextSearch(this.vectorStore) && embeddings.length !== texts.length) {
       log.error({ expected: texts.length, got: embeddings.length }, 'Embedding count mismatch')
       return
     }
@@ -46,13 +50,17 @@ export class LessonsJournal {
     await this.vectorStore.upsert(docs)
   }
 
-  async retrieve(query: string, ticker: string, topK: number): Promise<string[]> {
-    if (!this.vectorStore || !this.embedder) return []
-
-    const embedding = await this.embedder.embed(query)
-    const docs = await this.vectorStore.search(embedding, topK, {
-      must: [{ ticker }, { type: 'lesson' }],
-    })
+  async retrieve(query: string, ticker: string, market: string, topK: number): Promise<string[]> {
+    if (!this.vectorStore) return []
+    const docs = supportsTextSearch(this.vectorStore)
+      ? await this.vectorStore.searchText(query, topK, {
+          must: [{ ticker }, { market }, { type: 'lesson' }],
+        })
+      : this.embedder
+        ? await this.vectorStore.search(await this.embedder.embed(query), topK, {
+            must: [{ ticker }, { market }, { type: 'lesson' }],
+          })
+        : []
 
     return docs.map((doc) => doc.content)
   }

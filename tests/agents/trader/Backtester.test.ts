@@ -120,4 +120,68 @@ describe('Backtester', () => {
 
     expect(results).toEqual([])
   })
+
+  it('treats OVERWEIGHT as a bullish take-profit direction', async () => {
+    const orchestrator = mockOrchestrator(
+      makeReport('AAPL', 'US', {
+        action: 'OVERWEIGHT',
+        stopLoss: 95,
+        takeProfit: 105,
+      }),
+    )
+    const scorer = new CompositeScorer({ evaluationDays: 2 })
+
+    const ohlcvBars = [
+      { date: '2025-06-01', open: 100, high: 103, low: 99, close: 100, volume: 1000000 },
+      { date: '2025-06-02', open: 101, high: 106, low: 100, close: 106, volume: 1000000 },
+      { date: '2025-06-03', open: 106, high: 107, low: 104, close: 104, volume: 1000000 },
+    ]
+
+    const backtester = new Backtester({
+      orchestratorFactory: () => orchestrator,
+      scorer,
+      ticker: 'AAPL',
+      market: 'US',
+      ohlcvBars,
+      evaluationDays: 2,
+    })
+
+    const results = await backtester.replay(new Date('2025-06-01'), new Date('2025-06-01'))
+
+    expect(results).toHaveLength(1)
+    expect(results[0]?.hitTakeProfit).toBe(true)
+    expect(results[0]?.hitStopLoss).toBe(false)
+  })
+
+  it('does not mark take-profit or stop-loss hits for HOLD', async () => {
+    const orchestrator = mockOrchestrator(
+      makeReport('AAPL', 'US', {
+        action: 'HOLD',
+        stopLoss: 95,
+        takeProfit: 105,
+      }),
+    )
+    const scorer = new CompositeScorer({ evaluationDays: 2 })
+
+    const ohlcvBars = [
+      { date: '2025-06-01', open: 100, high: 106, low: 94, close: 100, volume: 1000000 },
+      { date: '2025-06-02', open: 100, high: 107, low: 93, close: 106, volume: 1000000 },
+      { date: '2025-06-03', open: 106, high: 108, low: 92, close: 94, volume: 1000000 },
+    ]
+
+    const backtester = new Backtester({
+      orchestratorFactory: () => orchestrator,
+      scorer,
+      ticker: 'AAPL',
+      market: 'US',
+      ohlcvBars,
+      evaluationDays: 2,
+    })
+
+    const results = await backtester.replay(new Date('2025-06-01'), new Date('2025-06-01'))
+
+    expect(results).toHaveLength(1)
+    expect(results[0]?.hitTakeProfit).toBe(false)
+    expect(results[0]?.hitStopLoss).toBe(false)
+  })
 })

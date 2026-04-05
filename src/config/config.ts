@@ -22,6 +22,7 @@ export const agentConfig: AgentConfigMap = {
   riskAnalyst:         { llm: usingLLM, model: RiskModel },
   riskManager:         { llm: usingLLM, model: RiskModel },
   manager:             { llm: usingLLM, model: RiskModel },
+  tradePlanner:        { llm: usingLLM, model: RiskModel },
   // Trader training pipeline — local Ollama defaults for iterative backtesting
   traderPipelineBull:         { llm: 'ollama', model: 'llama3.1' },
   traderPipelineBear:         { llm: 'ollama', model: 'llama3.1' },
@@ -64,13 +65,12 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   ragMode: 'disabled',
 }
 
-export type RAGMode = 'qdrant' | 'memory' | 'bm25' | 'disabled'
+export type RAGMode = 'qdrant' | 'memory' | 'disabled'
 
 /** Embedding model → vector dimension mapping */
 export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   'text-embedding-3-small': 1536,
   'text-embedding-3-large': 3072,
-  'nomic-embed-text': 768,
 }
 
 export function getEmbeddingDimension(model: string): number {
@@ -79,7 +79,7 @@ export function getEmbeddingDimension(model: string): number {
 
 export function detectRAGMode(): RAGMode {
   if (process.env['OPENAI_API_KEY'] && process.env['QDRANT_URL']) return 'qdrant'
+  if (process.env['RAG_BM25'] === 'true') return 'memory'
   if (process.env['OLLAMA_HOST']) return 'memory'
-  if (process.env['RAG_BM25'] === 'true') return 'bm25'
   return 'disabled'
 }

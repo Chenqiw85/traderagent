@@ -27,6 +27,21 @@ describe('Orchestrator', () => {
       callOrder.push('bull')
       return { ...r, researchFindings: [...r.researchFindings, { agentName: 'bull', stance: 'bull' as const, evidence: [], confidence: 0.8 }] }
     })
+    const tradePlanner = mockAgent('tradePlanner', 'trader', (r) => {
+      callOrder.push('tradePlanner')
+      return {
+        ...r,
+        traderProposal: {
+          action: 'BUY' as const,
+          confidence: 0.7,
+          summary: 'test proposal',
+          entryLogic: 'buy pullback',
+          whyNow: 'trend aligned',
+          timeHorizon: 'short' as const,
+          invalidationConditions: [],
+        },
+      }
+    })
     const riskAnalyst = mockAgent('riskAnalyst', 'risk', (r) => {
       callOrder.push('riskAnalyst')
       return { ...r, riskAssessment: { riskLevel: 'medium' as const, metrics: { VaR: 0.03, volatility: 0.22, beta: 1.1, maxDrawdown: 0.15 } } }
@@ -43,6 +58,7 @@ describe('Orchestrator', () => {
     const orchestrator = new Orchestrator({
       dataFetcher,
       researcherTeam: [bull],
+      tradePlanner,
       riskTeam: [riskAnalyst, riskManager],
       manager,
     })
@@ -51,7 +67,10 @@ describe('Orchestrator', () => {
 
     expect(callOrder[0]).toBe('dataFetcher')
     expect(callOrder[callOrder.length - 1]).toBe('manager')
+    expect(callOrder.indexOf('bull')).toBeLessThan(callOrder.indexOf('tradePlanner'))
+    expect(callOrder.indexOf('tradePlanner')).toBeLessThan(callOrder.indexOf('riskAnalyst'))
     expect(callOrder.indexOf('riskAnalyst')).toBeLessThan(callOrder.indexOf('riskManager'))
+    expect(result.traderProposal?.action).toBe('BUY')
     expect(result.finalDecision?.action).toBe('BUY')
   })
 
@@ -99,5 +118,56 @@ describe('Orchestrator', () => {
     expect(result.finalDecision).toBeDefined()
     expect(result.ticker).toBe('AAPL')
     expect(result.market).toBe('US')
+  })
+
+  it('publishes the latest completed report so callers can persist partial state on failure', async () => {
+    const snapshots: TradingReport[] = []
+
+    const researcher = mockAgent('bull', 'researcher', (r) => ({
+      ...r,
+      researchFindings: [
+        ...r.researchFindings,
+        { agentName: 'bull', stance: 'bull' as const, evidence: ['momentum'], confidence: 0.7 },
+      ],
+    }))
+    const tradePlanner = mockAgent('tradePlanner', 'trader', (r) => ({
+      ...r,
+      traderProposal: {
+        action: 'BUY' as const,
+        confidence: 0.66,
+        summary: 'Buy the breakout.',
+        entryLogic: 'Add above prior day high.',
+        whyNow: 'Trend is aligned.',
+        timeHorizon: 'swing' as const,
+        invalidationConditions: ['Close below breakout'],
+      },
+    }))
+    const explodingRisk = {
+      name: 'riskAnalyst',
+      role: 'risk' as const,
+      run: vi.fn().mockRejectedValue(new Error('risk stage failed')),
+    }
+    const manager = mockAgent('manager', 'manager', (r) => r)
+
+    const orchestrator = new Orchestrator({
+      researcherTeam: [researcher],
+      tradePlanner,
+      riskTeam: [explodingRisk],
+      manager,
+    })
+
+    await expect(
+      orchestrator.run('AAPL', 'US', {
+        onReportUpdate: (report) => {
+          snapshots.push(structuredClone(report))
+        },
+      }),
+    ).rejects.toThrow('risk stage failed')
+
+    expect(snapshots.length).toBeGreaterThanOrEqual(2)
+    expect(snapshots.at(-1)?.traderProposal).toMatchObject({
+      action: 'BUY',
+      summary: 'Buy the breakout.',
+    })
   })
 })

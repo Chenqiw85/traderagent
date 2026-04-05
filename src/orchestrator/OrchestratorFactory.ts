@@ -14,6 +14,7 @@ import { NewsAnalyst } from '../agents/researcher/NewsAnalyst.js'
 import { FundamentalsAnalyst } from '../agents/researcher/FundamentalsAnalyst.js'
 import { DebateEngine } from '../agents/researcher/DebateEngine.js'
 import { ResearchManager } from '../agents/researcher/ResearchManager.js'
+import { TradePlanner } from '../agents/trader/TradePlanner.js'
 import { RiskAnalyst } from '../agents/risk/RiskAnalyst.js'
 import { RiskManager } from '../agents/risk/RiskManager.js'
 import { AggressiveRiskAnalyst } from '../agents/risk/AggressiveRiskAnalyst.js'
@@ -30,12 +31,15 @@ type LLMMap = {
   bear: ILLMProvider
   news: ILLMProvider
   fundamentals: ILLMProvider
+  tradePlanner: ILLMProvider
   riskAnalyst: ILLMProvider
   riskManager: ILLMProvider
   manager: ILLMProvider
   researchManager?: ILLMProvider
   portfolioManager?: ILLMProvider
 }
+
+type LLMMapVariant = 'default' | 'trader'
 
 type FactoryDeps = {
   llms: LLMMap
@@ -73,6 +77,35 @@ const ANALYST_BUILDERS: Record<AnalystType, (deps: FactoryDeps) => IAgent> = {
     }),
 }
 
+export function resolveLLMMap(
+  getProvider: (agentName: string) => ILLMProvider,
+  variant: LLMMapVariant,
+): LLMMap {
+  if (variant === 'trader') {
+    return {
+      bull: getProvider('traderPipelineBull'),
+      bear: getProvider('traderPipelineBear'),
+      news: getProvider('traderPipelineNews'),
+      fundamentals: getProvider('traderPipelineFundamentals'),
+      tradePlanner: getProvider('traderPipelineManager'),
+      riskAnalyst: getProvider('traderPipelineRisk'),
+      riskManager: getProvider('traderPipelineRiskMgr'),
+      manager: getProvider('traderPipelineManager'),
+    }
+  }
+
+  return {
+    bull: getProvider('bullResearcher'),
+    bear: getProvider('bearResearcher'),
+    news: getProvider('newsAnalyst'),
+    fundamentals: getProvider('fundamentalsAnalyst'),
+    tradePlanner: getProvider('tradePlanner'),
+    riskAnalyst: getProvider('riskAnalyst'),
+    riskManager: getProvider('riskManager'),
+    manager: getProvider('manager'),
+  }
+}
+
 /**
  * Builds an Orchestrator wired with all configured features:
  * - Dynamic analyst selection
@@ -86,6 +119,10 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
   // Apply output language setting
   setOutputLanguage(pipelineConfig.outputLanguage)
 
+  const tradePlanner = new TradePlanner({
+    llm: llms.tradePlanner,
+  })
+
   // Build research team based on enabled analysts
   const researcherTeam: IAgent[] = pipelineConfig.enabledAnalysts.map(
     (type) => ANALYST_BUILDERS[type](deps),
@@ -93,7 +130,9 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
 
   // Debate components (optional)
   let debateEngine: DebateEngine | undefined
-  let researchManager: ResearchManager | undefined
+  let researchManager: ResearchManager | undefined = new ResearchManager({
+    llm: llms.researchManager ?? llms.manager,
+  })
   let bullResearcher: IAgent | undefined
   let bearResearcher: IAgent | undefined
 
@@ -106,9 +145,6 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
         bullLlm: llms.bull,
         bearLlm: llms.bear,
         maxRounds: pipelineConfig.maxDebateRounds,
-      })
-      researchManager = new ResearchManager({
-        llm: llms.researchManager ?? llms.manager,
       })
     }
   }
@@ -164,6 +200,7 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
     dataFetcher,
     technicalAnalyzer,
     researcherTeam,
+    tradePlanner,
     riskTeam,
     manager: new Manager({
       llm: llms.manager,

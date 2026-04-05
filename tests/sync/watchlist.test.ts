@@ -36,10 +36,12 @@ describe('watchlist', () => {
   })
 
   describe('removeTicker', () => {
-    it('deletes a watchlist entry by ticker', async () => {
+    it('deletes a watchlist entry by ticker and market', async () => {
       mockDelete.mockResolvedValue({ id: 1, ticker: 'AAPL' })
-      await removeTicker('AAPL')
-      expect(mockDelete).toHaveBeenCalledWith({ where: { ticker: 'AAPL' } })
+      await removeTicker('AAPL', 'US')
+      expect(mockDelete).toHaveBeenCalledWith({
+        where: { ticker_market: { ticker: 'AAPL', market: 'US' } },
+      })
     })
   })
 

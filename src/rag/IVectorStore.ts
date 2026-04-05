@@ -16,3 +16,11 @@ export interface IVectorStore {
   search(query: number[], topK: number, filter?: MetadataFilter): Promise<Document[]>
   delete(ids: string[]): Promise<void>
 }
+
+export interface ITextSearchVectorStore extends IVectorStore {
+  searchText(queryText: string, topK: number, filter?: MetadataFilter): Promise<Document[]>
+}
+
+export function supportsTextSearch(store: IVectorStore): store is ITextSearchVectorStore {
+  return typeof (store as Partial<ITextSearchVectorStore>).searchText === 'function'
+}

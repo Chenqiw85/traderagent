@@ -87,6 +87,43 @@ export type RiskAssessment = {
   takeProfit?: number
 }
 
+export type ResearchThesis = {
+  stance: 'bull' | 'bear' | 'neutral'
+  confidence: number
+  summary: string
+  keyDrivers: string[]
+  keyRisks: string[]
+  invalidationConditions: string[]
+  timeHorizon: 'short' | 'swing' | 'position'
+}
+
+export type TraderProposal = {
+  action: ActionTier
+  confidence: number
+  summary: string
+  entryLogic: string
+  whyNow: string
+  timeHorizon: ResearchThesis['timeHorizon']
+  positionSizeFraction?: number
+  stopLoss?: number
+  takeProfit?: number
+  invalidationConditions: string[]
+}
+
+export type RiskVerdict = {
+  approved: boolean
+  summary: string
+  blockers: string[]
+  requiredAdjustments: string[]
+}
+
+export type AnalysisArtifact = {
+  stage: 'research' | 'trade' | 'risk' | 'final'
+  agent: string
+  summary: string
+  payload: Record<string, unknown>
+}
+
 export type ActionTier = 'BUY' | 'OVERWEIGHT' | 'HOLD' | 'UNDERWEIGHT' | 'SELL'
 
 export const ACTION_TIERS: readonly ActionTier[] = ['BUY', 'OVERWEIGHT', 'HOLD', 'UNDERWEIGHT', 'SELL'] as const
@@ -117,6 +154,10 @@ export type TradingReport = {
   rawData: DataResult[]
   computedIndicators?: ComputedIndicators
   researchFindings: Finding[]
+  researchThesis?: ResearchThesis
+  traderProposal?: TraderProposal
   riskAssessment?: RiskAssessment
+  riskVerdict?: RiskVerdict
   finalDecision?: Decision
+  analysisArtifacts?: AnalysisArtifact[]
 }

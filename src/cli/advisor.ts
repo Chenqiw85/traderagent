@@ -7,40 +7,20 @@ import { AdvisorAgent } from '../agents/advisor/AdvisorAgent.js'
 import { AdvisorScheduler } from '../agents/advisor/AdvisorScheduler.js'
 import { DEFAULT_INDICES } from '../agents/advisor/types.js'
 import { formatAdvisorReport } from '../agents/advisor/ReportFormatter.js'
-import { Orchestrator } from '../orchestrator/Orchestrator.js'
-import { DataFetcher } from '../agents/data/DataFetcher.js'
-import { TechnicalAnalyzer } from '../agents/analyzer/TechnicalAnalyzer.js'
-import { BullResearcher } from '../agents/researcher/BullResearcher.js'
-import { BearResearcher } from '../agents/researcher/BearResearcher.js'
-import { NewsAnalyst } from '../agents/researcher/NewsAnalyst.js'
-import { FundamentalsAnalyst } from '../agents/researcher/FundamentalsAnalyst.js'
-import { RiskAnalyst } from '../agents/risk/RiskAnalyst.js'
-import { RiskManager } from '../agents/risk/RiskManager.js'
-import { Manager } from '../agents/manager/Manager.js'
+import { buildOrchestrator, resolveLLMMap } from '../orchestrator/OrchestratorFactory.js'
 import { LLMRegistry } from '../llm/registry.js'
 import { TokenProfiler } from '../llm/TokenProfiler.js'
 import { RetryLLMProvider } from '../llm/withRetry.js'
-import { FinnhubSource } from '../data/finnhub.js'
-import { YFinanceSource } from '../data/yfinance.js'
-import { FallbackDataSource } from '../data/FallbackDataSource.js'
-import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
-import { rateLimitDefaults } from '../config/rateLimits.js'
-import { PostgresDataSource } from '../db/PostgresDataSource.js'
-import { QdrantVectorStore } from '../rag/qdrant.js'
-import { InMemoryVectorStore } from '../rag/InMemoryVectorStore.js'
-import { Embedder } from '../rag/embedder.js'
-import { OllamaEmbedder } from '../rag/OllamaEmbedder.js'
-import { agentConfig, detectRAGMode, getEmbeddingDimension } from '../config/config.js'
+import { DEFAULT_PIPELINE_CONFIG, agentConfig } from '../config/config.js'
 import { createWhatsAppSenderFromEnv } from '../messaging/WhatsAppWebSender.js'
 import { listTickers } from '../sync/watchlist.js'
-import type { IDataSource } from '../data/IDataSource.js'
-import type { IVectorStore } from '../rag/IVectorStore.js'
-import type { IEmbedder } from '../rag/IEmbedder.js'
 import type { Market } from '../agents/base/types.js'
 import type { WatchlistEntry, IndexDef } from '../agents/advisor/types.js'
 import { validateTicker, validateMarket } from '../utils/validation.js'
 import { getErrorMessage } from '../utils/errors.js'
 import { createLogger } from '../utils/logger.js'
+import { saveAdvisorReport } from '../reports/AdvisorMarkdownReport.js'
+import { buildDataSourceChain, buildRAGDeps } from './bootstrap.js'
 
 const log = createLogger('cli:advisor')
 
@@ -49,57 +29,20 @@ const mode = process.argv[2]
 const isSchedule = mode === 'schedule'
 const isDryRun = process.argv.includes('--dry-run')
 
-// --- Data source setup (same as run.ts) ---
-const dataSources: IDataSource[] = []
-if (process.env['DATABASE_URL']) dataSources.push(new PostgresDataSource())
-if (process.env['FINNHUB_API_KEY']) dataSources.push(new RateLimitedDataSource(new FinnhubSource(), rateLimitDefaults['finnhub']))
-dataSources.push(new RateLimitedDataSource(new YFinanceSource(), rateLimitDefaults['yfinance']))
-const fallbackSource = new FallbackDataSource('advisor-chain', dataSources)
-
-// --- RAG setup ---
-const ragMode = detectRAGMode()
-let vectorStore: IVectorStore | undefined
-let embedder: IEmbedder | undefined
-
-if (ragMode === 'qdrant') {
-  const qdrantUrl = process.env['QDRANT_URL']
-  const openaiKey = process.env['OPENAI_API_KEY']
-  if (!qdrantUrl || !openaiKey) {
-    throw new Error('QDRANT_URL and OPENAI_API_KEY are required for qdrant RAG mode')
-  }
-  const embeddingModel = 'text-embedding-3-small'
-  vectorStore = new QdrantVectorStore({
-    url: qdrantUrl,
-    apiKey: process.env['QDRANT_API_KEY'],
-    collectionName: 'traderagent',
-    vectorSize: getEmbeddingDimension(embeddingModel),
-  })
-  embedder = new Embedder({ apiKey: openaiKey, model: embeddingModel })
-} else if (ragMode === 'memory') {
-  vectorStore = new InMemoryVectorStore()
-  embedder = new OllamaEmbedder({ model: 'nomic-embed-text' })
-}
+const fallbackSource = buildDataSourceChain('advisor-chain')
+const { ragMode, vectorStore, embedder } = buildRAGDeps()
 
 // --- LLM registry ---
 const registry = new LLMRegistry(agentConfig)
 const wrap = (agent: string) => new TokenProfiler(new RetryLLMProvider(registry.get(agent)), agent)
-const researcherConfig = { vectorStore, embedder }
-
-// --- Build Orchestrator (same pipeline as run.ts) ---
-const orchestrator = new Orchestrator({
-  dataFetcher: new DataFetcher({ dataSources: [fallbackSource], vectorStore, embedder }),
-  technicalAnalyzer: new TechnicalAnalyzer({ dataSource: fallbackSource }),
-  researcherTeam: [
-    new BullResearcher({ llm: wrap('bullResearcher'), ...researcherConfig }),
-    new BearResearcher({ llm: wrap('bearResearcher'), ...researcherConfig }),
-    new NewsAnalyst({ llm: wrap('newsAnalyst'), ...researcherConfig }),
-    new FundamentalsAnalyst({ llm: wrap('fundamentalsAnalyst'), ...researcherConfig }),
-  ],
-  riskTeam: [
-    new RiskAnalyst({ llm: wrap('riskAnalyst') }),
-    new RiskManager({ llm: wrap('riskManager') }),
-  ],
-  manager: new Manager({ llm: wrap('manager'), vectorStore, embedder }),
+const llms = resolveLLMMap(wrap, 'default')
+const orchestrator = buildOrchestrator({
+  llms,
+  pipelineConfig: { ...DEFAULT_PIPELINE_CONFIG, ragMode },
+  vectorStore,
+  embedder,
+  dataSource: fallbackSource,
+  spyDataSource: fallbackSource,
 })
 
 // --- Parse indices from env or use defaults ---
@@ -181,6 +124,10 @@ if (isSchedule) {
 
     const separator = '='.repeat(60)
     log.info(`\n${separator}\n${formatAdvisorReport(report)}\n${separator}`)
+
+    // Save markdown report
+    const reportPath = saveAdvisorReport(report)
+    log.info({ path: reportPath }, 'Advisor report saved')
 
     TokenProfiler.printSummary()
   } catch (err) {

@@ -4,8 +4,14 @@ import { OllamaProvider } from '../../src/llm/ollama.js'
 
 vi.mock('ollama', () => ({
   Ollama: vi.fn().mockImplementation(() => ({
-    chat: vi.fn().mockResolvedValue({
-      message: { content: 'Hello from Ollama' },
+    chat: vi.fn().mockImplementation((opts: { stream?: boolean }) => {
+      if (opts.stream) {
+        // Return an async iterable for streaming
+        return (async function* () {
+          yield { message: { content: 'Hello from Ollama' } }
+        })()
+      }
+      return Promise.resolve({ message: { content: 'Hello from Ollama' } })
     }),
   })),
 }))

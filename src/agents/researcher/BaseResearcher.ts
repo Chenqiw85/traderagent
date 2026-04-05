@@ -1,8 +1,9 @@
 import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, DataType, Finding, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
-import type { IVectorStore } from '../../rag/IVectorStore.js'
+import { supportsTextSearch, type IVectorStore } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
+import { buildSetupQuery } from '../../analysis/buildSetupQuery.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
 import { withLanguage } from '../../utils/i18n.js'
@@ -29,7 +30,7 @@ export abstract class BaseResearcher implements IAgent {
     this.vectorStore = config.vectorStore
     this.embedder = config.embedder
     this.topK = config.topK ?? 5
-    if ((config.vectorStore == null) !== (config.embedder == null)) {
+    if (config.vectorStore && !config.embedder && !supportsTextSearch(config.vectorStore)) {
       throw new Error(
         `${this.constructor.name}: vectorStore and embedder must both be provided or both omitted`
       )
@@ -126,17 +127,18 @@ export abstract class BaseResearcher implements IAgent {
   }
 
   protected async retrieveContext(report: TradingReport): Promise<string> {
-    if (!this.vectorStore || !this.embedder) return ''
-    const query = this.buildQuery(report)
-    const embedding = await this.embedder.embed(query)
-    const rawMarketDocs = await this.vectorStore.search(embedding, this.topK + 5, {
-      must: [{ ticker: report.ticker }],
+    const query = [this.buildQuery(report), buildSetupQuery(report)]
+      .filter((part) => part.trim().length > 0)
+      .join(' | ')
+    if (!this.vectorStore) return ''
+    const rawMarketDocs = await this.searchDocs(query, this.topK + 5, {
+      must: [{ ticker: report.ticker }, { market: report.market }],
     })
     const marketDocs = rawMarketDocs
       .filter((doc) => doc.metadata?.['type'] !== 'lesson')
       .slice(0, this.topK)
-    const lessonDocs = await this.vectorStore.search(embedding, 3, {
-      must: [{ ticker: report.ticker }, { type: 'lesson' }],
+    const lessonDocs = await this.searchDocs(query, 3, {
+      must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
     })
 
     const marketContext = marketDocs.map((doc) => doc.content).join('\n\n')
@@ -145,6 +147,16 @@ export abstract class BaseResearcher implements IAgent {
     if (!lessonContext) return marketContext
     if (!marketContext) return `=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
     return `${marketContext}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
+  }
+
+  private async searchDocs(query: string, topK: number, filter?: { must?: Record<string, unknown>[] }) {
+    if (!this.vectorStore) return []
+    if (supportsTextSearch(this.vectorStore)) {
+      return this.vectorStore.searchText(query, topK, filter)
+    }
+    if (!this.embedder) return []
+    const embedding = await this.embedder.embed(query)
+    return this.vectorStore.search(embedding, topK, filter)
   }
 
   protected parseFinding(response: string): Finding {

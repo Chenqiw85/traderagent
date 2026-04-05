@@ -1,6 +1,6 @@
 // src/rag/BM25VectorStore.ts
 
-import type { Document, IVectorStore, MetadataFilter } from './IVectorStore.js'
+import type { Document, ITextSearchVectorStore, MetadataFilter } from './IVectorStore.js'
 import { BM25Index } from './BM25Index.js'
 
 /**
@@ -8,18 +8,16 @@ import { BM25Index } from './BM25Index.js'
  * Ignores embedding vectors entirely — uses keyword matching instead.
  * Useful as a RAG fallback when no embedding API is available.
  */
-export class BM25VectorStore implements IVectorStore {
+export class BM25VectorStore implements ITextSearchVectorStore {
   private readonly index = new BM25Index()
   private readonly docs = new Map<string, Document>()
 
-  /** Stores a query text for BM25 search (set before calling search()) */
+  /** Stores a query text for compatibility with the embedding-shaped search() API */
   private lastQueryText = ''
 
   /**
-   * Set the text query to use for the next search() call.
-   * Since IVectorStore.search() takes a number[] embedding,
-   * callers should call setQueryText() before search() to provide
-   * the original text for BM25 matching.
+   * Legacy compatibility hook for callers that still route through search().
+   * New code should prefer searchText().
    */
   setQueryText(text: string): void {
     this.lastQueryText = text
@@ -54,6 +52,15 @@ export class BM25VectorStore implements IVectorStore {
     }
 
     return matched
+  }
+
+  async searchText(
+    queryText: string,
+    topK: number,
+    filter?: MetadataFilter,
+  ): Promise<Document[]> {
+    this.lastQueryText = queryText
+    return this.search([], topK, filter)
   }
 
   async delete(ids: string[]): Promise<void> {
