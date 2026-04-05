@@ -10,6 +10,10 @@ import { MarketTrendAnalyzer } from './MarketTrendAnalyzer.js'
 import { formatAdvisorReport } from './ReportFormatter.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { getErrorMessage } from '../../utils/errors.js'
+import { createLogger } from '../../utils/logger.js'
+import { withLanguage } from '../../utils/i18n.js'
+
+const log = createLogger('advisor-agent')
 
 type AdvisorAgentConfig = {
   readonly llm: ILLMProvider
@@ -45,12 +49,12 @@ export class AdvisorAgent {
   }
 
   async run(watchlist: readonly WatchlistEntry[]): Promise<AdvisorReport> {
-    console.log(`[Advisor] Starting analysis at ${new Date().toISOString()}`)
+    log.info('Starting analysis')
 
     // Stage 1: Analyze market trends across indices
-    console.log(`[Advisor] Analyzing ${this.indices.length} market indices...`)
+    log.info({ count: this.indices.length }, 'Analyzing market indices')
     const marketTrends = await this.trendAnalyzer.analyze(this.indices)
-    console.log(`[Advisor] Completed ${marketTrends.length} index analyses`)
+    log.info({ count: marketTrends.length }, 'Completed index analyses')
 
     // Stage 2: Run full pipeline for each watchlist ticker (parallel with concurrency limit)
     const tickerAdvisories: TickerAdvisory[] = []
@@ -59,7 +63,7 @@ export class AdvisorAgent {
     const tasks = watchlist.map((entry) =>
       queue.add(async () => {
         try {
-          console.log(`[Advisor] Running pipeline for ${entry.ticker} (${entry.market})...`)
+          log.info({ ticker: entry.ticker, market: entry.market }, 'Running pipeline')
           const report = await this.orchestrator.run(entry.ticker, entry.market)
           if (report.finalDecision) {
             tickerAdvisories.push({
@@ -72,7 +76,7 @@ export class AdvisorAgent {
             })
           }
         } catch (err) {
-          console.error(`[Advisor] Pipeline failed for ${entry.ticker}: ${getErrorMessage(err)}`)
+          log.error({ ticker: entry.ticker, error: getErrorMessage(err) }, 'Pipeline failed')
         }
       })
     )
@@ -94,9 +98,9 @@ export class AdvisorAgent {
         const formatted = formatAdvisorReport(advisorReport)
         await this.messageSender.send(this.whatsappTo, formatted)
         const maskedTo = this.whatsappTo.replace(/\d(?=\d{4})/g, '*')
-        console.log(`[Advisor] Report sent to ${maskedTo}`)
+        log.info({ to: maskedTo }, 'Report sent')
       } catch (err) {
-        console.error(`[Advisor] Failed to send WhatsApp message: ${getErrorMessage(err)}`)
+        log.error({ error: getErrorMessage(err) }, 'Failed to send WhatsApp message')
       }
     }
 
@@ -118,7 +122,7 @@ export class AdvisorAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: `You are a senior market advisor synthesizing a daily briefing.
+        content: withLanguage(`You are a senior market advisor synthesizing a daily briefing.
 
 MARKET INDICES:
 ${trendBlock}
@@ -132,7 +136,7 @@ Write a concise 3-5 sentence market advisory summary. Include:
 3. Any notable divergences between US and China markets
 
 Respond with ONLY a JSON object:
-{"summary": "<your advisory summary>"}`,
+{"summary": "<your advisory summary>"}`),
       },
       { role: 'user', content: 'Synthesize the daily advisory. JSON only.' },
     ])

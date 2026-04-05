@@ -27,7 +27,7 @@ describe('Backtester historical replay', () => {
     ]
 
     const backtester = new Backtester({
-      orchestrator,
+      orchestratorFactory: () => orchestrator,
       scorer,
       ticker: 'AAPL',
       market: 'US',

@@ -5,21 +5,28 @@ import { Backtester } from './Backtester.js'
 import { CompositeScorer } from './CompositeScorer.js'
 import { LessonExtractor } from './LessonExtractor.js'
 import { LessonsJournal } from './LessonsJournal.js'
+import { ReflectionEngine } from './ReflectionEngine.js'
 import type { OhlcvBar, PassResult, ScoredDecision, TrainConfig, WindowResult } from './types.js'
 import type { Orchestrator } from '../../orchestrator/Orchestrator.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('trader-agent')
 
 type TraderAgentConfig = {
-  orchestratorFactory: () => Orchestrator
+  orchestratorFactory: (cutoffDate: Date) => Orchestrator
   lessonLLM: ILLMProvider
   vectorStore?: IVectorStore
   embedder?: IEmbedder
   ohlcvBars: OhlcvBar[]
+  /** Enable structured reflection on worst decisions. Default: true */
+  reflectionEnabled?: boolean
 }
 
 export class TraderAgent {
-  private readonly orchestratorFactory: () => Orchestrator
+  private readonly orchestratorFactory: (cutoffDate: Date) => Orchestrator
   private readonly lessonExtractor: LessonExtractor
   private readonly lessonsJournal: LessonsJournal
+  private readonly reflectionEngine: ReflectionEngine | null
   private readonly ohlcvBars: OhlcvBar[]
 
   constructor(config: TraderAgentConfig) {
@@ -29,6 +36,9 @@ export class TraderAgent {
       vectorStore: config.vectorStore,
       embedder: config.embedder,
     })
+    this.reflectionEngine = (config.reflectionEnabled ?? true)
+      ? new ReflectionEngine({ llm: config.lessonLLM })
+      : null
     this.ohlcvBars = config.ohlcvBars
   }
 
@@ -40,9 +50,8 @@ export class TraderAgent {
     let stagnantPasses = 0
 
     for (let passNumber = 1; passNumber <= config.maxPasses; passNumber++) {
-      const orchestrator = this.orchestratorFactory()
       const backtester = new Backtester({
-        orchestrator,
+        orchestratorFactory: this.orchestratorFactory,
         scorer,
         ticker: config.ticker,
         market: config.market,
@@ -60,6 +69,33 @@ export class TraderAgent {
         passNumber,
       })
       await this.lessonsJournal.store(extractedLessons)
+
+      // Structured reflection on worst decisions
+      if (this.reflectionEngine) {
+        const reflections = await this.reflectionEngine.reflect({
+          decisions: trainDecisions,
+          ticker: config.ticker,
+          market: config.market,
+          passNumber,
+        })
+        if (reflections.length > 0) {
+          log.info({ ticker: config.ticker, count: reflections.length, pass: passNumber }, 'Reflections generated')
+          // Store reflections as lessons in the journal for future retrieval
+          const reflectionLessons = reflections.flatMap((r) =>
+            r.adjustments.map((adj) => ({
+              id: r.id + '-adj',
+              condition: `${r.action} on ${r.date} with return ${(r.actualReturn * 100).toFixed(1)}%`,
+              lesson: adj,
+              evidence: `Score: ${r.compositeScore.toFixed(3)}. Failed: ${r.whatFailed.join('; ')}`,
+              confidence: 0.6,
+              passNumber: r.passNumber,
+              ticker: r.ticker,
+              market: r.market,
+            })),
+          )
+          await this.lessonsJournal.store(reflectionLessons)
+        }
+      }
 
       const passResult: PassResult = {
         passNumber,

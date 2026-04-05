@@ -2,20 +2,23 @@
 // Usage: npm run test:whatsapp
 
 import { createWhatsAppSenderFromEnv } from '../messaging/WhatsAppWebSender.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('cli:test-whatsapp')
 
 const to = process.env['ADVISOR_WHATSAPP_TO']
 if (!to) {
-  console.error('Set ADVISOR_WHATSAPP_TO in .env (e.g. +1234567890)')
+  log.error('Set ADVISOR_WHATSAPP_TO in .env (e.g. +1234567890)')
   process.exit(1)
 }
 
 try {
   const sender = createWhatsAppSenderFromEnv()
   await sender.connect()
-  await sender.send(to, '✅ TraderAgent Advisor — WhatsApp test successful!')
-  console.log(`Message sent to ${to}`)
+  await sender.send(to, 'TraderAgent Advisor — WhatsApp test successful!')
+  log.info({ to }, 'Message sent')
   process.exit(0)
 } catch (err) {
-  console.error('Failed:', (err as Error).message)
+  log.error({ error: (err as Error).message }, 'Failed')
   process.exit(1)
 }

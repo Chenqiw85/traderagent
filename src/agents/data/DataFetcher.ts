@@ -8,6 +8,9 @@ import type { IVectorStore, Document } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { chunkText, type ChunkOptions } from '../../rag/chunker.js'
 import crypto from 'node:crypto'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('data-fetcher')
 
 type DataFetcherConfig = {
   dataSources: IDataSource[]
@@ -61,7 +64,7 @@ export class DataFetcher implements IAgent {
         fetchPromises.push(
           source.fetch(query).catch((err) => {
             const msg = err instanceof Error ? err.message : String(err)
-            console.warn(`[DataFetcher] ${source.name}/${type} failed: ${msg}`)
+            log.warn({ source: source.name, type, error: msg }, 'Data fetch failed')
             return null
           }),
         )

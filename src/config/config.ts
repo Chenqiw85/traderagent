@@ -36,7 +36,35 @@ export const agentConfig: AgentConfigMap = {
   marketTrendAnalyzer:  { llm: usingLLM, model: reacherModel },
 }
 
-export type RAGMode = 'qdrant' | 'memory' | 'disabled'
+export type AnalystType = 'bull' | 'bear' | 'news' | 'fundamentals'
+
+export const DEFAULT_ANALYSTS: readonly AnalystType[] = ['bull', 'bear', 'news', 'fundamentals']
+
+export type PipelineConfig = {
+  /** Which analysts to include in the research stage */
+  enabledAnalysts: AnalystType[]
+  /** Enable Bull vs Bear debate rounds */
+  debateEnabled: boolean
+  /** Number of debate rounds (each round = bull rebuttal + bear rebuttal) */
+  maxDebateRounds: number
+  /** Enable Aggressive/Conservative/Neutral risk debate */
+  riskDebateEnabled: boolean
+  /** Output language code (e.g. 'en', 'zh', 'ja') */
+  outputLanguage: string
+  /** RAG mode */
+  ragMode: RAGMode
+}
+
+export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
+  enabledAnalysts: [...DEFAULT_ANALYSTS],
+  debateEnabled: false,
+  maxDebateRounds: 2,
+  riskDebateEnabled: false,
+  outputLanguage: process.env['OUTPUT_LANGUAGE'] ?? 'en',
+  ragMode: 'disabled',
+}
+
+export type RAGMode = 'qdrant' | 'memory' | 'bm25' | 'disabled'
 
 /** Embedding model → vector dimension mapping */
 export const EMBEDDING_DIMENSIONS: Record<string, number> = {
@@ -52,5 +80,6 @@ export function getEmbeddingDimension(model: string): number {
 export function detectRAGMode(): RAGMode {
   if (process.env['OPENAI_API_KEY'] && process.env['QDRANT_URL']) return 'qdrant'
   if (process.env['OLLAMA_HOST']) return 'memory'
+  if (process.env['RAG_BM25'] === 'true') return 'bm25'
   return 'disabled'
 }

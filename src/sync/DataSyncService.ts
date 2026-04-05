@@ -4,6 +4,9 @@ import type { DataType, Market } from '../agents/base/types.js'
 import { RateLimitError } from '../data/errors.js'
 import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
 import { prisma } from '../db/client.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('data-sync')
 
 const DATA_TYPES: DataType[] = ['ohlcv', 'fundamentals', 'news', 'technicals']
 
@@ -33,17 +36,17 @@ export class DataSyncService {
 
   async syncAll(): Promise<void> {
     const tickers = await prisma.watchlist.findMany({ where: { active: true } })
-    console.log(`[DataSync] Syncing ${tickers.length} tickers`)
+    log.info({ count: tickers.length }, 'Syncing tickers')
 
     for (const entry of tickers) {
       await this.syncTicker(entry.ticker, entry.market as Market)
     }
 
-    console.log('[DataSync] Sync complete')
+    log.info('Sync complete')
   }
 
   async syncTicker(ticker: string, market: Market): Promise<void> {
-    console.log(`[DataSync] Syncing ${ticker} (${market})`)
+    log.info({ ticker, market }, 'Syncing ticker')
 
     for (const dataType of DATA_TYPES) {
       await this.syncDataType(ticker, market, dataType)
@@ -81,9 +84,7 @@ export class DataSyncService {
               err.retryAfterMs ?? this.rateLimitBackoffFloorMs,
               this.rateLimitBackoffFloorMs,
             )
-            console.warn(
-              `[DataSync] ${source.name}/${dataType} rate limited for ${ticker}, waiting ${waitMs}ms (attempt ${rateLimitRetries}/${this.maxRateLimitRetries})`,
-            )
+            log.warn({ source: source.name, dataType, ticker, waitMs, attempt: rateLimitRetries, max: this.maxRateLimitRetries }, 'Rate limited, waiting')
             await new Promise((r) => setTimeout(r, waitMs))
           } else {
             errorRetries++
@@ -95,9 +96,7 @@ export class DataSyncService {
         }
       }
 
-      console.warn(
-        `[DataSync] ${source.name}/${dataType} failed for ${ticker} after retries: ${lastError?.message}`,
-      )
+      log.warn({ source: source.name, dataType, ticker, error: lastError?.message }, 'Source failed after retries')
     }
 
     // All sources failed for this data type

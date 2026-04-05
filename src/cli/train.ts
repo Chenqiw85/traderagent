@@ -1,4 +1,5 @@
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
+import { DateFilteredDataSource } from '../data/DateFilteredDataSource.js'
 import { DataFetcher } from '../agents/data/DataFetcher.js'
 import { TechnicalAnalyzer } from '../agents/analyzer/TechnicalAnalyzer.js'
 import { BullResearcher } from '../agents/researcher/BullResearcher.js'
@@ -23,6 +24,9 @@ import { agentConfig, detectRAGMode } from '../config/config.js'
 import { TraderAgent } from '../agents/trader/TraderAgent.js'
 import type { Market } from '../agents/base/types.js'
 import type { IDataSource } from '../data/IDataSource.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('cli:train')
 import type { IVectorStore } from '../rag/IVectorStore.js'
 import type { IEmbedder } from '../rag/IEmbedder.js'
 
@@ -48,17 +52,16 @@ for (let index = 2; index < args.length; index++) {
 }
 
 if (!ticker || (marketArg != null && !VALID_MARKETS.has(marketArg))) {
-  console.error('Usage: npm run trader:train -- <TICKER> [MARKET] [--passes N] [--lookback MONTHS]')
-  console.error('  TICKER     Stock symbol (e.g. AAPL)')
-  console.error('  MARKET     US (default), CN, HK')
-  console.error('  --passes   Number of training passes (default 4)')
-  console.error('  --lookback Months of historical data (default 12)')
+  log.error('Usage: npm run trader:train -- <TICKER> [MARKET] [--passes N] [--lookback MONTHS]')
+  log.error('  TICKER     Stock symbol (e.g. AAPL)')
+  log.error('  MARKET     US (default), CN, HK')
+  log.error('  --passes   Number of training passes (default 4)')
+  log.error('  --lookback Months of historical data (default 12)')
   process.exit(1)
 }
 
 const market = (marketArg ?? 'US') as Market
-console.log(`\nTrader Training: ${ticker} on ${market}`)
-console.log(`  Passes: ${maxPasses}, Lookback: ${lookbackMonths} months\n`)
+log.info({ ticker, market, maxPasses, lookbackMonths }, 'Trader Training')
 
 const dataSources: IDataSource[] = []
 if (process.env['DATABASE_URL']) {
@@ -78,7 +81,7 @@ if (ragMode === 'qdrant') {
   const qdrantUrl = process.env['QDRANT_URL']
   const openaiKey = process.env['OPENAI_API_KEY']
   if (!qdrantUrl || !openaiKey) {
-    console.error('Qdrant RAG mode requires QDRANT_URL and OPENAI_API_KEY')
+    log.error('Qdrant RAG mode requires QDRANT_URL and OPENAI_API_KEY')
     process.exit(1)
   }
   vectorStore = new QdrantVectorStore({
@@ -96,7 +99,7 @@ const endDate = new Date()
 const startDate = new Date()
 startDate.setMonth(startDate.getMonth() - lookbackMonths)
 
-console.log(`Fetching ${lookbackMonths} months of OHLCV data for ${ticker}...`)
+log.info({ ticker, lookbackMonths }, 'Fetching OHLCV data')
 const ohlcvResult = await fallbackSource.fetch({
   ticker,
   market,
@@ -122,21 +125,22 @@ const ohlcvBars = (rawBars as RawBar[])
   .filter((bar) => bar.date !== '' && !Number.isNaN(bar.close) && bar.close > 0)
 
 if (ohlcvBars.length < 30) {
-  console.error('Not enough OHLCV data for training. Need at least 30 bars.')
+  log.error('Not enough OHLCV data for training. Need at least 30 bars.')
   process.exit(1)
 }
 
 const registry = new LLMRegistry(agentConfig)
 const researcherConfig = { vectorStore, embedder }
 
-function createOrchestrator(): Orchestrator {
+function createOrchestrator(cutoffDate: Date): Orchestrator {
+  const filteredSource = new DateFilteredDataSource(fallbackSource, cutoffDate)
   return new Orchestrator({
     dataFetcher: new DataFetcher({
-      dataSources: [fallbackSource],
+      dataSources: [filteredSource],
       vectorStore,
       embedder,
     }),
-    technicalAnalyzer: new TechnicalAnalyzer({ dataSource: fallbackSource }),
+    technicalAnalyzer: new TechnicalAnalyzer({ dataSource: filteredSource }),
     researcherTeam: [
       new BullResearcher({ llm: registry.get('traderPipelineBull'), ...researcherConfig }),
       new BearResearcher({ llm: registry.get('traderPipelineBear'), ...researcherConfig }),
@@ -178,8 +182,8 @@ try {
   })
 
   const finalScore = results[results.length - 1]?.avgTestScore ?? 0
-  console.log(`\nTraining complete. Final test score: ${finalScore.toFixed(3)}`)
+  log.info({ finalScore: finalScore.toFixed(3) }, 'Training complete')
 } catch (error) {
-  console.error(`\nTRAINING FAILED: ${(error as Error).message}`)
+  log.error({ error: (error as Error).message }, 'Training failed')
   process.exit(1)
 }

@@ -87,8 +87,21 @@ export type RiskAssessment = {
   takeProfit?: number
 }
 
+export type ActionTier = 'BUY' | 'OVERWEIGHT' | 'HOLD' | 'UNDERWEIGHT' | 'SELL'
+
+export const ACTION_TIERS: readonly ActionTier[] = ['BUY', 'OVERWEIGHT', 'HOLD', 'UNDERWEIGHT', 'SELL'] as const
+
+/** Maps each action to a directional signal: +1 bullish, 0 neutral, -1 bearish */
+export const ACTION_DIRECTION: Record<ActionTier, number> = {
+  BUY: 1,
+  OVERWEIGHT: 0.5,
+  HOLD: 0,
+  UNDERWEIGHT: -0.5,
+  SELL: -1,
+}
+
 export type Decision = {
-  action: 'BUY' | 'SELL' | 'HOLD'
+  action: ActionTier
   confidence: number // 0–1
   reasoning: string
   suggestedPositionSize?: number

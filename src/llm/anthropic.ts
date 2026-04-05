@@ -2,6 +2,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { ILLMProvider } from './ILLMProvider.js'
 import type { Message, LLMOptions } from './types.js'
+import { normalizeResponse } from './normalizeResponse.js'
 
 type AnthropicConfig = {
   apiKey: string
@@ -31,8 +32,7 @@ export class AnthropicProvider implements ILLMProvider {
       top_p: options?.topP,
     })
 
-    const block = response.content[0]
-    return block?.type === 'text' ? block.text : ''
+    return normalizeResponse(response.content)
   }
 
   async *chatStream(messages: Message[], options?: LLMOptions): AsyncIterable<string> {

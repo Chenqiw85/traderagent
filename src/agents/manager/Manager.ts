@@ -1,10 +1,12 @@
 // src/agents/manager/Manager.ts
 import type { IAgent } from '../base/IAgent.js'
-import type { AgentRole, Decision, TradingReport } from '../base/types.js'
+import type { ActionTier, AgentRole, Decision, TradingReport } from '../base/types.js'
+import { ACTION_TIERS } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { IVectorStore } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { parseJson } from '../../utils/parseJson.js'
+import { withLanguage } from '../../utils/i18n.js'
 
 type ManagerConfig = {
   llm: ILLMProvider
@@ -39,18 +41,24 @@ export class Manager implements IAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: `You are a senior portfolio manager making a final trading decision for ${report.ticker}.
+        content: withLanguage(`You are a senior portfolio manager making a final trading decision for ${report.ticker}.
 ${fullContext}
-Weigh the bull and bear evidence against the risk assessment. Make a final BUY, SELL, or HOLD recommendation.
+Weigh the bull and bear evidence against the risk assessment. Make a final recommendation using the 5-tier scale:
+- BUY: Strong conviction to enter/add a long position
+- OVERWEIGHT: Moderately bullish, increase existing position
+- HOLD: Neutral, maintain current position
+- UNDERWEIGHT: Moderately bearish, reduce existing position
+- SELL: Strong conviction to exit/short
+
 Respond with ONLY a JSON object matching this schema:
 {
-  "action": "BUY" | "SELL" | "HOLD",
+  "action": "BUY" | "OVERWEIGHT" | "HOLD" | "UNDERWEIGHT" | "SELL",
   "confidence": <number 0-1>,
   "reasoning": "<clear explanation of the decision>",
   "suggestedPositionSize": <number, fraction of portfolio>,
   "stopLoss": <number or null>,
   "takeProfit": <number or null>
-}`,
+}`),
       },
       { role: 'user', content: `Make a final decision for ${report.ticker}. Respond with JSON only.` },
     ])
@@ -91,8 +99,11 @@ Respond with ONLY a JSON object matching this schema:
   private parseDecision(response: string): Decision {
     try {
       const parsed = parseJson<Partial<Decision>>(response)
+      const action: ActionTier = ACTION_TIERS.includes(parsed.action as ActionTier)
+        ? (parsed.action as ActionTier)
+        : 'HOLD'
       return {
-        action: parsed.action ?? 'HOLD',
+        action,
         confidence: parsed.confidence ?? 0.5,
         reasoning: parsed.reasoning ?? 'Unable to parse manager response',
         suggestedPositionSize: parsed.suggestedPositionSize,

@@ -3,6 +3,9 @@
 import cron from 'node-cron'
 import type { AdvisorAgent } from './AdvisorAgent.js'
 import type { WatchlistEntry } from './types.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('advisor-scheduler')
 
 const DEFAULT_CRON = '30 8 * * 1-5' // 8:30 AM ET, weekdays
 
@@ -25,21 +28,20 @@ export class AdvisorScheduler {
     if (!cron.validate(this.cronExpression)) {
       throw new Error(`Invalid cron expression: "${this.cronExpression}"`)
     }
-    console.log(`[AdvisorScheduler] Starting with cron: ${this.cronExpression}`)
-    console.log(`[AdvisorScheduler] Next run will execute at the scheduled time`)
+    log.info({ cron: this.cronExpression }, 'Starting scheduler')
 
     cron.schedule(this.cronExpression, () => {
-      console.log(`[AdvisorScheduler] Cron fired at ${new Date().toISOString()}`)
+      log.info('Cron fired')
       this.execute().catch((err) => {
-        console.error(`[AdvisorScheduler] Run failed:`, err)
+        log.error({ error: err }, 'Run failed')
       })
     })
   }
 
   async execute(): Promise<void> {
     const watchlist = await this.getWatchlist()
-    console.log(`[AdvisorScheduler] Running for ${watchlist.length} tickers`)
+    log.info({ count: watchlist.length }, 'Running for tickers')
     await this.advisor.run(watchlist)
-    console.log(`[AdvisorScheduler] Completed at ${new Date().toISOString()}`)
+    log.info('Completed')
   }
 }

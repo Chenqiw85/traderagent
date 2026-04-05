@@ -1,6 +1,6 @@
 // src/agents/trader/CompositeScorer.ts
 
-import type { Decision } from '../base/types.js'
+import { ACTION_DIRECTION, type Decision } from '../base/types.js'
 import { SCORE_WEIGHTS, type ScoreBreakdown } from './types.js'
 
 type ScorerConfig = {
@@ -45,41 +45,46 @@ export class CompositeScorer {
   }
 
   private scoreDirectional(decision: Decision, outcome: PriceOutcome): number {
-    if (decision.action === 'HOLD') return 0.5
-    const priceUp = outcome.actualReturn > 0
-    if (decision.action === 'BUY' && priceUp) return 1
-    if (decision.action === 'SELL' && !priceUp) return 1
-    return 0
+    const direction = ACTION_DIRECTION[decision.action]
+    if (direction === 0) return 0.5 // HOLD
+    // For directional actions, score based on alignment with actual return
+    const aligned = (direction > 0 && outcome.actualReturn > 0) ||
+                    (direction < 0 && outcome.actualReturn < 0)
+    if (aligned) return Math.abs(direction) >= 1 ? 1 : 0.75 // BUY/SELL = 1, OVERWEIGHT/UNDERWEIGHT = 0.75
+    return Math.abs(direction) >= 1 ? 0 : 0.25 // Wrong direction but mild conviction = 0.25
   }
 
   private scoreTargetHit(decision: Decision, outcome: PriceOutcome): number {
     if (decision.stopLoss == null && decision.takeProfit == null) return 0.5
     const entryPrice = outcome.closePrices[0]
     if (entryPrice == null) return 0.5
-    const isBuy = decision.action === 'BUY'
+    const direction = ACTION_DIRECTION[decision.action]
+    const isBullish = direction > 0
     for (const price of outcome.closePrices) {
       if (decision.takeProfit != null) {
-        if (isBuy && price >= decision.takeProfit) return 1
-        if (!isBuy && price <= decision.takeProfit) return 1
+        if (isBullish && price >= decision.takeProfit) return 1
+        if (!isBullish && price <= decision.takeProfit) return 1
       }
       if (decision.stopLoss != null) {
-        if (isBuy && price <= decision.stopLoss) return 0
-        if (!isBuy && price >= decision.stopLoss) return 0
+        if (isBullish && price <= decision.stopLoss) return 0
+        if (!isBullish && price >= decision.stopLoss) return 0
       }
     }
     return 0.5
   }
 
   private scoreCalibration(decision: Decision, outcome: PriceOutcome): number {
-    if (decision.action === 'HOLD') return decision.confidence
+    const direction = ACTION_DIRECTION[decision.action]
+    if (direction === 0) return decision.confidence // HOLD
     const correct =
-      (decision.action === 'BUY' && outcome.actualReturn > 0) ||
-      (decision.action === 'SELL' && outcome.actualReturn <= 0)
+      (direction > 0 && outcome.actualReturn > 0) ||
+      (direction < 0 && outcome.actualReturn <= 0)
     return correct ? decision.confidence : 1 - decision.confidence
   }
 
   private scoreHoldPenalty(decision: Decision, outcome: PriceOutcome): number {
-    if (decision.action !== 'HOLD') return 1
+    const direction = ACTION_DIRECTION[decision.action]
+    if (direction !== 0) return 1 // Non-HOLD actions are not penalized
     const absReturn = Math.abs(outcome.actualReturn)
     return absReturn <= this.holdThreshold ? 1 : 0
   }

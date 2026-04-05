@@ -3,6 +3,9 @@ import cron from 'node-cron'
 import { DataSyncService } from './DataSyncService.js'
 import { YFinanceSource } from '../data/yfinance.js'
 import { FinnhubSource } from '../data/finnhub.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('scheduler')
 
 const DEFAULT_CRON = '30 16 * * 1-5' // 4:30 PM ET, weekdays
 
@@ -22,12 +25,12 @@ export class Scheduler {
 
     const syncService = new DataSyncService(sources)
 
-    console.log(`[Scheduler] Starting with cron: ${this.cronExpression}`)
+    log.info({ cron: this.cronExpression }, 'Starting scheduler')
 
     cron.schedule(this.cronExpression, () => {
-      console.log(`[Scheduler] Cron fired at ${new Date().toISOString()}`)
+      log.info('Cron fired')
       syncService.syncAll().catch((err) => {
-        console.error('[Scheduler] Sync failed:', err)
+        log.error({ error: err }, 'Sync failed')
       })
     })
   }

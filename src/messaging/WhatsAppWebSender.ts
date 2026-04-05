@@ -10,6 +10,9 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom'
 import { join } from 'node:path'
 import type { IMessageSender } from './IMessageSender.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('whatsapp')
 
 const WHATSAPP_MAX_LENGTH = 4096
 
@@ -53,7 +56,7 @@ export class WhatsAppWebSender implements IMessageSender {
       const { connection, lastDisconnect, qr } = update
 
       if (qr) {
-        console.log('[WhatsApp] Scan this QR code with your phone:')
+        log.info('Scan this QR code with your phone:')
         this.printQR(qr)
       }
 
@@ -62,17 +65,17 @@ export class WhatsAppWebSender implements IMessageSender {
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
         if (shouldReconnect) {
-          console.log('[WhatsApp] Connection closed, reconnecting...')
+          log.info('Connection closed, reconnecting...')
           this.socket = undefined
           this.connect().catch((err) => {
-            console.error('[WhatsApp] Reconnection failed:', (err as Error).message)
+            log.error({ error: (err as Error).message }, 'Reconnection failed')
           })
         } else {
-          console.error('[WhatsApp] Logged out. Delete auth folder and re-scan QR.')
+          log.error('Logged out. Delete auth folder and re-scan QR.')
           this.rejectReady?.(new Error('WhatsApp logged out'))
         }
       } else if (connection === 'open') {
-        console.log('[WhatsApp] Connected successfully')
+        log.info('Connected successfully')
         this.resolveReady?.()
       }
     })
@@ -111,7 +114,7 @@ export class WhatsAppWebSender implements IMessageSender {
       generate(qr, { small: true })
     }).catch(() => {
       // Fallback: just print the raw string so the user can paste it into a QR renderer
-      console.log(qr)
+      log.info(qr)
     })
   }
 

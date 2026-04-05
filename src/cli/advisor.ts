@@ -40,6 +40,9 @@ import type { Market } from '../agents/base/types.js'
 import type { WatchlistEntry, IndexDef } from '../agents/advisor/types.js'
 import { validateTicker, validateMarket } from '../utils/validation.js'
 import { getErrorMessage } from '../utils/errors.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('cli:advisor')
 
 // --- Parse CLI args ---
 const mode = process.argv[2]
@@ -114,14 +117,14 @@ function parseIndices(): readonly IndexDef[] {
 // --- WhatsApp sender (optional, skipped in dry-run) ---
 let messageSender
 if (isDryRun) {
-  console.log('[Advisor] Dry-run mode — WhatsApp disabled')
+  log.info('Dry-run mode — WhatsApp disabled')
 } else {
   try {
     const sender = createWhatsAppSenderFromEnv()
     await sender.connect()
     messageSender = sender
   } catch {
-    console.log('[Advisor] WhatsApp not configured — reports will print to console only')
+    log.info('WhatsApp not configured — reports will print to log only')
   }
 }
 
@@ -149,7 +152,7 @@ if (isSchedule) {
     },
   })
   scheduler.start()
-  console.log('[Advisor] Scheduler running. Press Ctrl+C to stop.')
+  log.info('Scheduler running. Press Ctrl+C to stop.')
 } else {
   // One-shot mode: run immediately
   const getWatchlist = async (): Promise<WatchlistEntry[]> => {
@@ -163,8 +166,8 @@ if (isSchedule) {
     // Otherwise read from DB watchlist
     const tickers = await listTickers()
     if (tickers.length === 0) {
-      console.error('No tickers provided. Usage: npm run advisor -- AAPL,TSLA US')
-      console.error('Or add tickers to watchlist: npm run watchlist:add -- AAPL US')
+      log.error('No tickers provided. Usage: npm run advisor -- AAPL,TSLA US')
+      log.error('Or add tickers to watchlist: npm run watchlist:add -- AAPL US')
       process.exit(1)
     }
     return tickers.map((t) => ({ ticker: t.ticker, market: t.market as Market }))
@@ -172,19 +175,17 @@ if (isSchedule) {
 
   try {
     const watchlist = await getWatchlist()
-    console.log(`\n[Advisor] Analyzing: ${watchlist.map((w) => w.ticker).join(', ')}\n`)
+    log.info({ tickers: watchlist.map((w) => w.ticker) }, 'Analyzing')
 
     const report = await advisor.run(watchlist)
 
-    // Print to console
-    console.log('\n' + '='.repeat(60))
-    console.log(formatAdvisorReport(report))
-    console.log('='.repeat(60))
+    const separator = '='.repeat(60)
+    log.info(`\n${separator}\n${formatAdvisorReport(report)}\n${separator}`)
 
     TokenProfiler.printSummary()
   } catch (err) {
     TokenProfiler.printSummary()
-    console.error(`\n[Advisor] FAILED: ${getErrorMessage(err)}`)
+    log.error({ error: getErrorMessage(err) }, 'Advisor failed')
     process.exit(1)
   }
 }

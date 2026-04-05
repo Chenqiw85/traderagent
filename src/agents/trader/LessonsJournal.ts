@@ -1,6 +1,9 @@
 import type { IVectorStore, Document } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import type { LessonEntry } from './types.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('lessons-journal')
 
 type JournalConfig = {
   vectorStore?: IVectorStore
@@ -23,7 +26,7 @@ export class LessonsJournal {
     const embeddings = await this.embedder.embedBatch(texts)
 
     if (embeddings.length !== texts.length) {
-      console.error(`[LessonsJournal] Embedding count mismatch: expected ${texts.length}, got ${embeddings.length}`)
+      log.error({ expected: texts.length, got: embeddings.length }, 'Embedding count mismatch')
       return
     }
 

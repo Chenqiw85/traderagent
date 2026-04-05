@@ -3,6 +3,9 @@
 
 import type { ILLMProvider } from './ILLMProvider.js'
 import type { Message, LLMOptions } from './types.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('llm-retry')
 
 type RetryConfig = {
   maxRetries?: number
@@ -53,7 +56,7 @@ export class RetryLLMProvider implements ILLMProvider {
             this.baseDelayMs * Math.pow(2, attempt),
             this.maxDelayMs,
           )
-          console.warn(`[RetryLLM] ${this.name} attempt ${attempt + 1} failed, retrying in ${delay}ms...`)
+          log.warn({ provider: this.name, attempt: attempt + 1, delayMs: delay }, 'LLM call failed, retrying')
           await new Promise((r) => setTimeout(r, delay))
         } else {
           break

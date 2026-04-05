@@ -63,7 +63,7 @@ describe('TraderAgent', () => {
     )
 
     const trader = new TraderAgent({
-      orchestratorFactory: () => makeOrchestrator(),
+      orchestratorFactory: (_cutoff: Date) => makeOrchestrator(),
       lessonLLM,
       vectorStore,
       embedder,
@@ -94,7 +94,7 @@ describe('TraderAgent', () => {
 
   it('stops early when test score does not improve enough', async () => {
     const trader = new TraderAgent({
-      orchestratorFactory: () => makeOrchestrator(),
+      orchestratorFactory: (_cutoff: Date) => makeOrchestrator(),
       lessonLLM: mockLLM('[]'),
       ohlcvBars: Array.from({ length: 50 }, (_, i) => ({
         date: new Date(2025, 0, i + 1).toISOString(),
@@ -122,7 +122,7 @@ describe('TraderAgent', () => {
   it('extracts lessons from train decisions only', async () => {
     const lessonLLM = mockLLM('[]')
     const trader = new TraderAgent({
-      orchestratorFactory: () => makeOrchestrator(),
+      orchestratorFactory: (_cutoff: Date) => makeOrchestrator(),
       lessonLLM,
       ohlcvBars: Array.from({ length: 50 }, (_, i) => ({
         date: new Date(2025, 0, i + 1).toISOString(),

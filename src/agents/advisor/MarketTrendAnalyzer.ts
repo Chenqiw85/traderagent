@@ -8,7 +8,11 @@ import {
   calcRSI,
 } from '../../indicators/index.js'
 import { parseJson } from '../../utils/parseJson.js'
+import { withLanguage } from '../../utils/i18n.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('market-trend')
 
 type MarketTrendAnalyzerConfig = {
   readonly llm: ILLMProvider
@@ -33,7 +37,7 @@ export class MarketTrendAnalyzer {
         trends.push(trend)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        console.warn(`[MarketTrendAnalyzer] Failed to analyze ${index.ticker}: ${msg}`)
+        log.warn({ ticker: index.ticker, error: msg }, 'Failed to analyze index')
       }
     }
 
@@ -80,7 +84,7 @@ export class MarketTrendAnalyzer {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: `You are a market analyst. Summarize the trend for this index in 1-2 sentences based ONLY on the data below.\n\n${indicatorBlock}\n\nRespond with ONLY a JSON object:\n{"summary": "<1-2 sentence summary>"}`,
+        content: withLanguage(`You are a market analyst. Summarize the trend for this index in 1-2 sentences based ONLY on the data below.\n\n${indicatorBlock}\n\nRespond with ONLY a JSON object:\n{"summary": "<1-2 sentence summary>"}`),
       },
       { role: 'user', content: `Summarize the trend for ${index.name}. JSON only.` },
     ])

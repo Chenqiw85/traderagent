@@ -3,6 +3,7 @@ import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
+import { withLanguage } from '../../utils/i18n.js'
 
 type RiskManagerConfig = {
   llm: ILLMProvider
@@ -31,14 +32,14 @@ export class RiskManager implements IAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: `You are a risk manager. Set position sizing and risk limits for ${report.ticker}.
+        content: withLanguage(`You are a risk manager. Set position sizing and risk limits for ${report.ticker}.
 ${context}
 Respond with ONLY a JSON object matching this schema:
 {
   "maxPositionSize": <number, fraction of portfolio e.g. 0.05>,
   "stopLoss": <number, price level>,
   "takeProfit": <number, price level>
-}`,
+}`),
       },
       { role: 'user', content: `Set position limits for ${report.ticker}. Respond with JSON only.` },
     ])

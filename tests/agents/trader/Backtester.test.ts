@@ -48,7 +48,7 @@ describe('Backtester', () => {
     }))
 
     const backtester = new Backtester({
-      orchestrator,
+      orchestratorFactory: () => orchestrator,
       scorer,
       ticker: 'AAPL',
       market: 'US',
@@ -84,7 +84,7 @@ describe('Backtester', () => {
     }))
 
     const backtester = new Backtester({
-      orchestrator,
+      orchestratorFactory: () => orchestrator,
       scorer,
       ticker: 'AAPL',
       market: 'US',
@@ -108,7 +108,7 @@ describe('Backtester', () => {
     ]
 
     const backtester = new Backtester({
-      orchestrator,
+      orchestratorFactory: () => orchestrator,
       scorer,
       ticker: 'AAPL',
       market: 'US',

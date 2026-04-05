@@ -1,6 +1,9 @@
 // src/cli/watchlist.ts
 import { addTicker, removeTicker, listTickers } from '../sync/watchlist.js'
 import { validateTicker, validateMarket } from '../utils/validation.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('cli:watchlist')
 
 async function main() {
   const [command, ...args] = process.argv.slice(2)
@@ -9,40 +12,38 @@ async function main() {
     case 'add': {
       const [tickerRaw, marketRaw = 'US'] = args
       if (!tickerRaw) {
-        console.error('Usage: watchlist add <TICKER> [US|CN|HK]')
+        log.error('Usage: watchlist add <TICKER> [US|CN|HK]')
         process.exit(1)
       }
       const ticker = validateTicker(tickerRaw)
       const market = validateMarket(marketRaw)
       const entry = await addTicker(ticker, market)
-      console.log(`Added ${entry.ticker} (${entry.market}) to watchlist`)
+      log.info({ ticker: entry.ticker, market: entry.market }, 'Added to watchlist')
       break
     }
     case 'remove': {
       const [tickerRaw] = args
       if (!tickerRaw) {
-        console.error('Usage: watchlist remove <TICKER>')
+        log.error('Usage: watchlist remove <TICKER>')
         process.exit(1)
       }
       const ticker = validateTicker(tickerRaw)
       await removeTicker(ticker)
-      console.log(`Removed ${ticker} from watchlist`)
+      log.info({ ticker }, 'Removed from watchlist')
       break
     }
     case 'list': {
       const entries = await listTickers()
       if (entries.length === 0) {
-        console.log('Watchlist is empty')
+        log.info('Watchlist is empty')
       } else {
-        console.log('Active watchlist:')
-        for (const e of entries) {
-          console.log(`  ${e.ticker} (${e.market})`)
-        }
+        const list = entries.map((e) => `  ${e.ticker} (${e.market})`).join('\n')
+        log.info(`Active watchlist:\n${list}`)
       }
       break
     }
     default:
-      console.error('Usage: watchlist <add|remove|list> [args]')
+      log.error('Usage: watchlist <add|remove|list> [args]')
       process.exit(1)
   }
 
@@ -50,6 +51,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Watchlist command failed:', err)
+  log.error({ error: err }, 'Watchlist command failed')
   process.exit(1)
 })

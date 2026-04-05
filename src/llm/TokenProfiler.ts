@@ -4,6 +4,9 @@
 
 import type { ILLMProvider } from './ILLMProvider.js'
 import type { Message, LLMOptions } from './types.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('token-profiler')
 
 type CallRecord = {
   agent: string
@@ -54,7 +57,7 @@ export class TokenProfiler implements ILLMProvider {
     const totalInputTokens = estimateTokens(messages.map((m) => m.content).join(''))
 
     if (isDebug) {
-      console.log(`[TokenProfiler] ${this.agentName} input: ${totalInputChars.toLocaleString()} chars ≈ ${totalInputTokens.toLocaleString()} tokens`)
+      log.debug({ agent: this.agentName, chars: totalInputChars, tokens: totalInputTokens }, 'LLM input')
     }
 
     const start = performance.now()
@@ -65,7 +68,7 @@ export class TokenProfiler implements ILLMProvider {
     const outputTokens = estimateTokens(response)
 
     if (isDebug) {
-      console.log(`[TokenProfiler] ${this.agentName} output: ${outputChars.toLocaleString()} chars ≈ ${outputTokens.toLocaleString()} tokens (${(durationMs / 1000).toFixed(1)}s)`)
+      log.debug({ agent: this.agentName, chars: outputChars, tokens: outputTokens, durationMs }, 'LLM output')
     }
 
     this.records.push({
@@ -95,13 +98,11 @@ export class TokenProfiler implements ILLMProvider {
     const recs = records ?? TokenProfiler.sharedRecords
     if (recs.length === 0) return
 
-    console.log(`\n${'═'.repeat(80)}`)
-    console.log(`TOKEN USAGE SUMMARY — ALL LLM CALLS`)
-    console.log(`${'═'.repeat(80)}`)
-    console.log(
-      `${'Agent'.padEnd(22)} ${'Sys Tok'.padStart(8)} ${'Usr Tok'.padStart(8)} ${'In Tok'.padStart(8)} ${'Out Tok'.padStart(8)} ${'Total'.padStart(8)} ${'Time'.padStart(6)}`
-    )
-    console.log(`${'─'.repeat(80)}`)
+    const header = `\n${'═'.repeat(80)}\nTOKEN USAGE SUMMARY — ALL LLM CALLS\n${'═'.repeat(80)}`
+    const colHeader = `${'Agent'.padEnd(22)} ${'Sys Tok'.padStart(8)} ${'Usr Tok'.padStart(8)} ${'In Tok'.padStart(8)} ${'Out Tok'.padStart(8)} ${'Total'.padStart(8)} ${'Time'.padStart(6)}`
+    const separator = `${'─'.repeat(80)}`
+
+    const lines = [header, colHeader, separator]
 
     let grandInputTokens = 0
     let grandOutputTokens = 0
@@ -112,23 +113,24 @@ export class TokenProfiler implements ILLMProvider {
       grandInputTokens += r.totalInputTokens
       grandOutputTokens += r.outputTokens
       grandDuration += r.durationMs
-      console.log(
+      lines.push(
         `${r.agent.padEnd(22)} ${r.systemTokens.toLocaleString().padStart(8)} ${r.userTokens.toLocaleString().padStart(8)} ${r.totalInputTokens.toLocaleString().padStart(8)} ${r.outputTokens.toLocaleString().padStart(8)} ${total.toLocaleString().padStart(8)} ${(r.durationMs / 1000).toFixed(1).padStart(5)}s`
       )
     }
 
     const grandTotal = grandInputTokens + grandOutputTokens
-    console.log(`${'─'.repeat(80)}`)
-    console.log(
+    lines.push(separator)
+    lines.push(
       `${'TOTAL'.padEnd(22)} ${''.padStart(8)} ${''.padStart(8)} ${grandInputTokens.toLocaleString().padStart(8)} ${grandOutputTokens.toLocaleString().padStart(8)} ${grandTotal.toLocaleString().padStart(8)} ${(grandDuration / 1000).toFixed(1).padStart(5)}s`
     )
-    console.log(`${'═'.repeat(80)}`)
+    lines.push(`${'═'.repeat(80)}`)
+
+    log.info(lines.join('\n'))
 
     // Warn if any single call exceeded common limits
     for (const r of recs) {
       if (r.totalInputTokens > 30_000) {
-        console.log(`\n  WARNING: ${r.agent} used ~${r.totalInputTokens.toLocaleString()} input tokens — close to or exceeding model limits!`)
-        console.log(`   System prompt: ${r.systemContentLength.toLocaleString()} chars (${r.systemTokens.toLocaleString()} tokens)`)
+        log.warn({ agent: r.agent, inputTokens: r.totalInputTokens, systemChars: r.systemContentLength }, 'Input tokens close to or exceeding model limits')
       }
     }
   }

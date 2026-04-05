@@ -9,6 +9,9 @@ import {
   calcBeta, calcMaxDrawdown, calcVaR,
 } from '../../indicators/index.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('tech-analyzer')
 
 type TechnicalAnalyzerConfig = { dataSource: IDataSource }
 
@@ -45,7 +48,7 @@ export class TechnicalAnalyzer implements IAgent {
       })
       const spyBars = this.parseBars(spyResult.data)
       marketReturns = this.calcReturns(spyBars.map((b) => b.close))
-    } catch { console.warn('[TechnicalAnalyzer] Could not fetch SPY for beta — using beta=1') }
+    } catch { log.warn('Could not fetch SPY for beta — using beta=1') }
 
     const fundResult = report.rawData.find((r) => r.type === 'fundamentals')
     const macd = calcMACD(closes)

@@ -2,9 +2,12 @@ import type { Orchestrator } from '../../orchestrator/Orchestrator.js'
 import type { Decision, Market } from '../base/types.js'
 import type { OhlcvBar, ScoredDecision } from './types.js'
 import type { CompositeScorer } from './CompositeScorer.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('backtester')
 
 type BacktesterConfig = {
-  orchestrator: Orchestrator
+  orchestratorFactory: (cutoffDate: Date) => Orchestrator
   scorer: CompositeScorer
   ticker: string
   market: Market
@@ -18,7 +21,7 @@ type PriceOutcome = {
 }
 
 export class Backtester {
-  private readonly orchestrator: Orchestrator
+  private readonly orchestratorFactory: (cutoffDate: Date) => Orchestrator
   private readonly scorer: CompositeScorer
   private readonly ticker: string
   private readonly market: Market
@@ -26,7 +29,7 @@ export class Backtester {
   private readonly evaluationDays: number
 
   constructor(config: BacktesterConfig) {
-    this.orchestrator = config.orchestrator
+    this.orchestratorFactory = config.orchestratorFactory
     this.scorer = config.scorer
     this.ticker = config.ticker
     this.market = config.market
@@ -48,14 +51,17 @@ export class Backtester {
       const lookaheadBars = this.bars.slice(index, index + this.evaluationDays + 1)
       const outcome = this.buildOutcome(lookaheadBars)
 
+      // Create a date-filtered orchestrator for this bar to prevent look-ahead bias
+      const orchestrator = this.orchestratorFactory(barDate)
+
       let report
       try {
-        report = await this.orchestrator.run(this.ticker, this.market, {
+        report = await orchestrator.run(this.ticker, this.market, {
           timestamp: barDate,
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        console.error(`[Backtester] Orchestrator failed for ${bar.date}: ${message}`)
+        log.error({ date: bar.date, error: message }, 'Orchestrator failed')
         continue
       }
 

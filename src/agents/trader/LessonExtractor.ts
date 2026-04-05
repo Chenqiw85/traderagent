@@ -3,6 +3,9 @@ import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { Market } from '../base/types.js'
 import type { LessonEntry, ScoredDecision } from './types.js'
 import { parseJson } from '../../utils/parseJson.js'
+import { createLogger } from '../../utils/logger.js'
+
+const log = createLogger('lesson-extractor')
 
 type LessonExtractorConfig = {
   llm: ILLMProvider
@@ -44,7 +47,7 @@ export class LessonExtractor {
       ])
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.error(`[LessonExtractor] LLM call failed for ${input.ticker} pass ${input.passNumber}: ${message}`)
+      log.error({ ticker: input.ticker, pass: input.passNumber, error: message }, 'LLM call failed')
       return []
     }
 
@@ -82,7 +85,7 @@ export class LessonExtractor {
   private buildSystemPrompt(ticker: string, summary: string): string {
     return `You are a trading strategy analyst reviewing backtested decisions for ${ticker}.
 
-Below are the scored decisions from a backtest run. Each shows the date, action (BUY/SELL/HOLD), confidence, actual return over 5 trading days, composite score, and reasoning.
+Below are the scored decisions from a backtest run. Each shows the date, action (BUY/OVERWEIGHT/HOLD/UNDERWEIGHT/SELL), confidence, actual return over 5 trading days, composite score, and reasoning.
 
 ${summary}
 

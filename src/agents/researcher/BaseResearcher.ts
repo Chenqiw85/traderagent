@@ -5,6 +5,7 @@ import type { IVectorStore } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
+import { withLanguage } from '../../utils/i18n.js'
 
 export type ResearcherConfig = {
   llm: ILLMProvider
@@ -51,7 +52,7 @@ export abstract class BaseResearcher implements IAgent {
     const context = await this.retrieveContext(report)
     const indicators = this.formatIndicators(report)
     const rawDataContext = this.formatRawData(report)
-    const systemPrompt = this.buildSystemPrompt(report, context, rawDataContext, indicators)
+    const systemPrompt = withLanguage(this.buildSystemPrompt(report, context, rawDataContext, indicators))
     const response = await this.llm.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `Analyze ${report.ticker} on the ${report.market} market. Base your analysis ONLY on the data provided above. Do not invent numbers. Respond with JSON only.` },

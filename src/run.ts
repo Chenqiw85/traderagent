@@ -28,6 +28,9 @@ import { agentConfig, detectRAGMode, getEmbeddingDimension } from './config/conf
 import type { Market } from './agents/base/types.js'
 import type { IDataSource } from './data/IDataSource.js'
 import { getErrorMessage } from './utils/errors.js'
+import { createLogger } from './utils/logger.js'
+
+const log = createLogger('run')
 
 const VALID_MARKETS = new Set(['US', 'CN', 'HK'])
 
@@ -35,19 +38,19 @@ const ticker = process.argv[2]
 const market = process.argv[3] as Market | undefined
 
 if (!ticker || VALID_MARKETS.has(ticker)) {
-  console.error(`Usage: npm run run:analyze -- <TICKER> [MARKET]`)
-  console.error(`  TICKER  Stock symbol (e.g. AAPL, SNDK)`)
-  console.error(`  MARKET  Market: US (default), CN, HK`)
+  log.error(`Usage: npm run run:analyze -- <TICKER> [MARKET]`)
+  log.error(`  TICKER  Stock symbol (e.g. AAPL, SNDK)`)
+  log.error(`  MARKET  Market: US (default), CN, HK`)
   if (VALID_MARKETS.has(ticker ?? '')) {
-    console.error(`\nError: "${ticker}" looks like a market, not a ticker.`)
-    console.error(`Did you mean: npm run run:analyze -- <TICKER> ${ticker}`)
+    log.error(`Error: "${ticker}" looks like a market, not a ticker.`)
+    log.error(`Did you mean: npm run run:analyze -- <TICKER> ${ticker}`)
   }
   process.exit(1)
 }
 
 const resolvedMarket: Market = market && VALID_MARKETS.has(market) ? market : 'US'
 
-console.log(`\nAnalyzing ${ticker} on ${resolvedMarket} market...\n`)
+log.info({ ticker, market: resolvedMarket }, 'Analyzing stock')
 
 // --- Data source fallback chain ---
 const dataSources: IDataSource[] = []
@@ -80,7 +83,7 @@ if (ragMode === 'qdrant') {
     throw new Error('QDRANT_URL and OPENAI_API_KEY are required for qdrant RAG mode')
   }
   const embeddingModel = 'text-embedding-3-small'
-  console.log('[RAG] Full mode: Qdrant + OpenAI embeddings')
+  log.info('RAG: Qdrant + OpenAI embeddings')
   vectorStore = new QdrantVectorStore({
     url: qdrantUrl,
     apiKey: process.env['QDRANT_API_KEY'],
@@ -89,11 +92,11 @@ if (ragMode === 'qdrant') {
   })
   embedder = new Embedder({ apiKey: openaiKey, model: embeddingModel })
 } else if (ragMode === 'memory') {
-  console.log('[RAG] In-memory mode: local store + Ollama embeddings')
+  log.info('RAG: in-memory + Ollama embeddings')
   vectorStore = new InMemoryVectorStore()
   embedder = new OllamaEmbedder({ model: 'nomic-embed-text' })
 } else {
-  console.log('[RAG] Disabled — set OPENAI_API_KEY+QDRANT_URL or OLLAMA_HOST to enable')
+  log.info('RAG: disabled — set OPENAI_API_KEY+QDRANT_URL or OLLAMA_HOST to enable')
 }
 
 // --- Build pipeline ---
@@ -127,43 +130,44 @@ const orchestrator = new Orchestrator({
 try {
   const report = await orchestrator.run(ticker, resolvedMarket)
 
-  console.log('='.repeat(60))
-  console.log(`FINAL DECISION: ${report.ticker} (${report.market})`)
-  console.log('='.repeat(60))
+  const separator = '='.repeat(60)
+  const lines = [`\n${separator}`, `FINAL DECISION: ${report.ticker} (${report.market})`, separator]
 
   if (report.finalDecision) {
     const d = report.finalDecision
-    console.log(`Action:      ${d.action}`)
-    console.log(`Confidence:  ${(d.confidence * 100).toFixed(0)}%`)
-    console.log(`Reasoning:   ${d.reasoning}`)
+    lines.push(`Action:      ${d.action}`)
+    lines.push(`Confidence:  ${(d.confidence * 100).toFixed(0)}%`)
+    lines.push(`Reasoning:   ${d.reasoning}`)
     if (d.suggestedPositionSize != null)
-      console.log(`Position:    ${(d.suggestedPositionSize * 100).toFixed(1)}% of portfolio`)
-    if (d.stopLoss != null) console.log(`Stop loss:   $${d.stopLoss}`)
-    if (d.takeProfit != null) console.log(`Take profit: $${d.takeProfit}`)
+      lines.push(`Position:    ${(d.suggestedPositionSize * 100).toFixed(1)}% of portfolio`)
+    if (d.stopLoss != null) lines.push(`Stop loss:   $${d.stopLoss}`)
+    if (d.takeProfit != null) lines.push(`Take profit: $${d.takeProfit}`)
   } else {
-    console.log('No decision produced.')
+    lines.push('No decision produced.')
   }
 
   if (report.computedIndicators) {
     const ci = report.computedIndicators
-    console.log('\nComputed Indicators:')
-    console.log(`  RSI: ${ci.momentum.rsi.toFixed(1)} | MACD: ${ci.trend.macd.line.toFixed(2)} | Beta: ${ci.risk.beta.toFixed(2)}`)
-    console.log(`  Volatility: ${(ci.volatility.historicalVolatility * 100).toFixed(1)}% | MaxDD: ${(ci.risk.maxDrawdown * 100).toFixed(1)}% | VaR95: ${(ci.risk.var95 * 100).toFixed(2)}%`)
+    lines.push('\nComputed Indicators:')
+    lines.push(`  RSI: ${ci.momentum.rsi.toFixed(1)} | MACD: ${ci.trend.macd.line.toFixed(2)} | Beta: ${ci.risk.beta.toFixed(2)}`)
+    lines.push(`  Volatility: ${(ci.volatility.historicalVolatility * 100).toFixed(1)}% | MaxDD: ${(ci.risk.maxDrawdown * 100).toFixed(1)}% | VaR95: ${(ci.risk.var95 * 100).toFixed(2)}%`)
   }
 
-  console.log('\nResearch findings:')
+  lines.push('\nResearch findings:')
   for (const f of report.researchFindings) {
-    console.log(`  [${f.agentName}] ${f.stance} (${(f.confidence * 100).toFixed(0)}%) — ${f.evidence.slice(0, 2).join('; ')}`)
+    lines.push(`  [${f.agentName}] ${f.stance} (${(f.confidence * 100).toFixed(0)}%) — ${f.evidence.slice(0, 2).join('; ')}`)
   }
 
   if (report.riskAssessment) {
     const ra = report.riskAssessment
-    console.log(`\nRisk: ${ra.riskLevel} | VaR: ${(ra.metrics.VaR * 100).toFixed(2)}% | Volatility: ${(ra.metrics.volatility * 100).toFixed(1)}%`)
+    lines.push(`\nRisk: ${ra.riskLevel} | VaR: ${(ra.metrics.VaR * 100).toFixed(2)}% | Volatility: ${(ra.metrics.volatility * 100).toFixed(1)}%`)
   }
+
+  log.info(lines.join('\n'))
 
   TokenProfiler.printSummary()
 } catch (err) {
   TokenProfiler.printSummary()
-  console.error(`\nPIPELINE FAILED: ${getErrorMessage(err)}`)
+  log.error({ error: getErrorMessage(err) }, 'Pipeline failed')
   process.exit(1)
 }
