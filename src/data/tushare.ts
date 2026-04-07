@@ -55,8 +55,10 @@ export class TushareSource implements IDataSource {
 
   async fetch(query: DataQuery): Promise<DataResult> {
     const { ticker, market, type } = query
-    // Tushare uses ts_code format, e.g. "000001.SZ"
-    const tsCode = ticker.includes('.') ? ticker : `${ticker}.SZ`
+    // Tushare uses ts_code format: 601985.SH (Shanghai), 000001.SZ (Shenzhen)
+    const tsCode = ticker.includes('.')
+      ? ticker
+      : ticker.startsWith('6') ? `${ticker}.SH` : `${ticker}.SZ`
 
     let data: unknown
 

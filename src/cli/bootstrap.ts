@@ -1,7 +1,5 @@
 import { FinnhubSource } from '../data/finnhub.js'
 import { YFinanceSource } from '../data/yfinance.js'
-import { TushareSource } from '../data/tushare.js'
-import { AkShareSource } from '../data/akshare.js'
 import { FallbackDataSource } from '../data/FallbackDataSource.js'
 import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
 import { rateLimitDefaults } from '../config/rateLimits.js'
@@ -28,15 +26,6 @@ export function buildDataSourceChain(chainName: string): FallbackDataSource {
 
   if (process.env['DATABASE_URL']) {
     dataSources.push(new PostgresDataSource())
-  }
-
-  // Chinese market sources (Tushare, AkShare) — tried before Finnhub/YFinance for CN tickers
-  if (process.env['TUSHARE_TOKEN']) {
-    dataSources.push(new RateLimitedDataSource(new TushareSource(), rateLimitDefaults['tushare']))
-  }
-
-  if (process.env['AKSHARE_BASE_URL']) {
-    dataSources.push(new RateLimitedDataSource(new AkShareSource(), rateLimitDefaults['akshare']))
   }
 
   if (process.env['FINNHUB_API_KEY']) {
