@@ -1,5 +1,7 @@
 import { FinnhubSource } from '../data/finnhub.js'
 import { YFinanceSource } from '../data/yfinance.js'
+import { TushareSource } from '../data/tushare.js'
+import { AkShareSource } from '../data/akshare.js'
 import { FallbackDataSource } from '../data/FallbackDataSource.js'
 import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
 import { rateLimitDefaults } from '../config/rateLimits.js'
@@ -8,6 +10,7 @@ import { QdrantVectorStore } from '../rag/qdrant.js'
 import { BM25VectorStore } from '../rag/BM25VectorStore.js'
 import { Embedder } from '../rag/embedder.js'
 import { detectRAGMode, getEmbeddingDimension, type RAGMode } from '../config/config.js'
+import { PerAgentMemoryStore } from '../rag/PerAgentMemoryStore.js'
 import type { IDataSource } from '../data/IDataSource.js'
 import type { IEmbedder } from '../rag/IEmbedder.js'
 import type { IVectorStore } from '../rag/IVectorStore.js'
@@ -16,6 +19,8 @@ type RAGDeps = {
   ragMode: RAGMode
   vectorStore?: IVectorStore
   embedder?: IEmbedder
+  /** Per-agent isolated memory stores (BM25 mode only) */
+  perAgentMemory?: PerAgentMemoryStore
 }
 
 export function buildDataSourceChain(chainName: string): FallbackDataSource {
@@ -23,6 +28,15 @@ export function buildDataSourceChain(chainName: string): FallbackDataSource {
 
   if (process.env['DATABASE_URL']) {
     dataSources.push(new PostgresDataSource())
+  }
+
+  // Chinese market sources (Tushare, AkShare) — tried before Finnhub/YFinance for CN tickers
+  if (process.env['TUSHARE_TOKEN']) {
+    dataSources.push(new RateLimitedDataSource(new TushareSource(), rateLimitDefaults['tushare']))
+  }
+
+  if (process.env['AKSHARE_BASE_URL']) {
+    dataSources.push(new RateLimitedDataSource(new AkShareSource(), rateLimitDefaults['akshare']))
   }
 
   if (process.env['FINNHUB_API_KEY']) {
@@ -57,5 +71,8 @@ export function buildRAGDeps(): RAGDeps {
     vectorStore = new BM25VectorStore()
   }
 
-  return { ragMode, vectorStore, embedder }
+  // Per-agent memory is only available in BM25 mode (lightweight in-memory stores)
+  const perAgentMemory = ragMode === 'memory' ? new PerAgentMemoryStore() : undefined
+
+  return { ragMode, vectorStore, embedder, perAgentMemory }
 }

@@ -5,6 +5,8 @@ import type { AgentRole, RiskAssessment, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
+import { buildRiskMetricsContext, extractDebateContext, type RiskDebateAssessment } from './riskDebateUtils.js'
 
 type RiskAnalystConfig = {
   llm: ILLMProvider
@@ -33,22 +35,19 @@ export class AggressiveRiskAnalyst implements IAgent {
       maxDrawdown: ci.risk.maxDrawdown,
     }
 
-    const context = [
-      `Risk metrics for ${report.ticker}:`,
-      `  VaR (95%): ${(riskMetrics.VaR * 100).toFixed(2)}%`,
-      `  Volatility: ${(riskMetrics.volatility * 100).toFixed(1)}%`,
-      `  Beta: ${riskMetrics.beta.toFixed(2)}`,
-      `  Max Drawdown: ${(riskMetrics.maxDrawdown * 100).toFixed(1)}%`,
-    ].join('\n')
+    const metricsContext = buildRiskMetricsContext(report.ticker, riskMetrics)
+    const debateContext = extractDebateContext(report, this.name)
 
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: withLanguage(`You are an AGGRESSIVE risk analyst who favors higher returns and is willing to accept more risk. You believe in taking larger positions when conviction is high, and that volatility represents opportunity, not just danger.
+        content: withLanguage(`${tickerPreservationInstruction(report.ticker)}
 
-${context}
+You are an AGGRESSIVE risk analyst who favors higher returns and is willing to accept more risk. You believe in taking larger positions when conviction is high, and that volatility represents opportunity, not just danger.
 
-Given these metrics, provide your risk assessment. As an aggressive analyst, you tend to classify risk as lower and recommend larger positions.
+${metricsContext}
+${debateContext}
+Given these metrics, provide your risk assessment. As an aggressive analyst, you tend to classify risk as lower and recommend larger positions.${debateContext ? ' Directly address and counter the other analysts\' arguments.' : ''}
 
 Respond with ONLY a JSON object:
 {
@@ -60,7 +59,7 @@ Respond with ONLY a JSON object:
       { role: 'user', content: `Assess risk for ${report.ticker} with an aggressive stance. JSON only.` },
     ])
 
-    const parsed = parseJson<{ riskLevel?: string; maxPositionSize?: number; reasoning?: string }>(response)
+    const parsed = parseJson<RiskDebateAssessment>(response)
 
     return {
       ...report,
@@ -69,6 +68,15 @@ Respond with ONLY a JSON object:
         metrics: riskMetrics,
         maxPositionSize: parsed.maxPositionSize,
       },
+      analysisArtifacts: [
+        ...(report.analysisArtifacts ?? []),
+        {
+          stage: 'risk',
+          agent: this.name,
+          summary: parsed.reasoning ?? '',
+          payload: { riskLevel: parsed.riskLevel, maxPositionSize: parsed.maxPositionSize, reasoning: parsed.reasoning },
+        },
+      ],
     }
   }
 }

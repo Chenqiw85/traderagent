@@ -7,11 +7,14 @@ import { buildSetupQuery } from '../../analysis/buildSetupQuery.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 
 export type ResearcherConfig = {
   llm: ILLMProvider
   vectorStore?: IVectorStore
   embedder?: IEmbedder
+  /** Separate store for lesson retrieval (per-agent memory isolation) */
+  lessonStore?: IVectorStore
   topK?: number
 }
 
@@ -23,12 +26,14 @@ export abstract class BaseResearcher implements IAgent {
   protected llm: ILLMProvider
   protected vectorStore?: IVectorStore
   protected embedder?: IEmbedder
+  protected lessonStore?: IVectorStore
   protected topK: number
 
   constructor(config: ResearcherConfig) {
     this.llm = config.llm
     this.vectorStore = config.vectorStore
     this.embedder = config.embedder
+    this.lessonStore = config.lessonStore
     this.topK = config.topK ?? 5
     if (config.vectorStore && !config.embedder && !supportsTextSearch(config.vectorStore)) {
       throw new Error(
@@ -53,7 +58,7 @@ export abstract class BaseResearcher implements IAgent {
     const context = await this.retrieveContext(report)
     const indicators = this.formatIndicators(report)
     const rawDataContext = this.formatRawData(report)
-    const systemPrompt = withLanguage(this.buildSystemPrompt(report, context, rawDataContext, indicators))
+    const systemPrompt = withLanguage(`${tickerPreservationInstruction(report.ticker)}\n\n${this.buildSystemPrompt(report, context, rawDataContext, indicators)}`)
     const response = await this.llm.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `Analyze ${report.ticker} on the ${report.market} market. Base your analysis ONLY on the data provided above. Do not invent numbers. Respond with JSON only.` },
@@ -131,13 +136,15 @@ export abstract class BaseResearcher implements IAgent {
       .filter((part) => part.trim().length > 0)
       .join(' | ')
     if (!this.vectorStore) return ''
-    const rawMarketDocs = await this.searchDocs(query, this.topK + 5, {
+    const rawMarketDocs = await this.searchDocs(this.vectorStore, query, this.topK + 5, {
       must: [{ ticker: report.ticker }, { market: report.market }],
     })
     const marketDocs = rawMarketDocs
       .filter((doc) => doc.metadata?.['type'] !== 'lesson')
       .slice(0, this.topK)
-    const lessonDocs = await this.searchDocs(query, 3, {
+    // Use the per-agent lesson store if available, otherwise fall back to shared store
+    const lessonStoreToUse = this.lessonStore ?? this.vectorStore
+    const lessonDocs = await this.searchDocs(lessonStoreToUse, query, 3, {
       must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
     })
 
@@ -149,14 +156,13 @@ export abstract class BaseResearcher implements IAgent {
     return `${marketContext}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
   }
 
-  private async searchDocs(query: string, topK: number, filter?: { must?: Record<string, unknown>[] }) {
-    if (!this.vectorStore) return []
-    if (supportsTextSearch(this.vectorStore)) {
-      return this.vectorStore.searchText(query, topK, filter)
+  private async searchDocs(store: IVectorStore, query: string, topK: number, filter?: { must?: Record<string, unknown>[] }) {
+    if (supportsTextSearch(store)) {
+      return store.searchText(query, topK, filter)
     }
     if (!this.embedder) return []
     const embedding = await this.embedder.embed(query)
-    return this.vectorStore.search(embedding, topK, filter)
+    return store.search(embedding, topK, filter)
   }
 
   protected parseFinding(response: string): Finding {

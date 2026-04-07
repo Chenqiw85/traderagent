@@ -44,7 +44,7 @@ const market = (marketArg ?? 'US') as Market
 log.info({ ticker, market, maxPasses, lookbackMonths }, 'Trader Training')
 
 const fallbackSource = buildDataSourceChain('price-chain')
-const { ragMode, vectorStore, embedder } = buildRAGDeps()
+const { ragMode, vectorStore, embedder, perAgentMemory } = buildRAGDeps()
 
 const endDate = new Date()
 const startDate = new Date()
@@ -90,6 +90,7 @@ function createOrchestrator(cutoffDate: Date) {
     pipelineConfig: { ...DEFAULT_PIPELINE_CONFIG, ragMode },
     vectorStore,
     embedder,
+    perAgentMemory,
     dataSource: filteredSource,
     spyDataSource: filteredSource,
   })

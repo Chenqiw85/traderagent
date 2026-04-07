@@ -30,8 +30,23 @@ export class YFinanceSource implements IDataSource {
     throw error
   }
 
+  /**
+   * Yahoo Finance requires market suffixes for non-US tickers:
+   *   CN Shanghai (6xxxxx) → .SS, CN Shenzhen (0xxxxx/3xxxxx) → .SZ
+   *   HK → .HK
+   */
+  private resolveYahooTicker(ticker: string, market: string): string {
+    if (ticker.includes('.')) return ticker // already suffixed
+    if (market === 'HK') return `${ticker}.HK`
+    if (market === 'CN') {
+      return ticker.startsWith('6') ? `${ticker}.SS` : `${ticker}.SZ`
+    }
+    return ticker
+  }
+
   async fetch(query: DataQuery): Promise<DataResult> {
     const { ticker, market, type } = query
+    const yahooTicker = this.resolveYahooTicker(ticker, market)
 
     let data: unknown
 
@@ -45,7 +60,7 @@ export class YFinanceSource implements IDataSource {
           interval: '1d',
         }
         try {
-          data = await this.yf.chart(ticker, chartOpts)
+          data = await this.yf.chart(yahooTicker, chartOpts)
         } catch (error) {
           data = this.extractPartialResult(error)
         }
@@ -60,7 +75,7 @@ export class YFinanceSource implements IDataSource {
           interval: '1d',
         }
         try {
-          data = await this.yf.chart(ticker, chartOpts)
+          data = await this.yf.chart(yahooTicker, chartOpts)
         } catch (error) {
           data = this.extractPartialResult(error)
         }
@@ -68,10 +83,10 @@ export class YFinanceSource implements IDataSource {
       }
       case 'fundamentals': {
         const [quoteSummary, quote] = await Promise.all([
-          this.yf.quoteSummary(ticker, {
+          this.yf.quoteSummary(yahooTicker, {
             modules: ['financialData', 'defaultKeyStatistics', 'earningsHistory', 'incomeStatementHistory', 'balanceSheetHistory'],
           }),
-          this.yf.quote(ticker),
+          this.yf.quote(yahooTicker),
         ])
         // Keep only entries from the past year to reduce token usage
         const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
@@ -99,8 +114,8 @@ export class YFinanceSource implements IDataSource {
       }
       case 'news': {
         const [searchResult, quote] = await Promise.all([
-          this.yf.search(ticker),
-          this.yf.quote(ticker),
+          this.yf.search(yahooTicker),
+          this.yf.quote(yahooTicker),
         ])
         const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
         const recentNews = (searchResult.news ?? []).filter((n: Record<string, unknown>) => {

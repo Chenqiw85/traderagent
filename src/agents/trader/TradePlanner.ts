@@ -7,6 +7,7 @@ import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 import { createLogger } from '../../utils/logger.js'
 
 const log = createLogger('trade-planner')
@@ -93,7 +94,9 @@ export class TradePlanner implements IAgent {
     }
 
     const groundedContext = this.buildGroundedContext(report)
-    const prompt = withLanguage(`You are a live trade planner converting a structured research thesis into an executable trade proposal for ${report.ticker}.
+    const prompt = withLanguage(`${tickerPreservationInstruction(report.ticker)}
+
+You are a live trade planner converting a structured research thesis into an executable trade proposal for ${report.ticker}.
 
 Use the research thesis as the primary input, but ground any numeric outputs in the live market context provided below. If the context is insufficient for a number, leave that field null instead of inventing precision.
 

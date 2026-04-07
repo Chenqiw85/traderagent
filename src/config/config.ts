@@ -50,6 +50,8 @@ export type PipelineConfig = {
   maxDebateRounds: number
   /** Enable Aggressive/Conservative/Neutral risk debate */
   riskDebateEnabled: boolean
+  /** Number of risk debate rounds (each round = Aggressive → Conservative → Neutral) */
+  maxRiskDebateRounds: number
   /** Output language code (e.g. 'en', 'zh', 'ja') */
   outputLanguage: string
   /** RAG mode */
@@ -61,6 +63,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   debateEnabled: false,
   maxDebateRounds: 2,
   riskDebateEnabled: false,
+  maxRiskDebateRounds: 1,
   outputLanguage: process.env['OUTPUT_LANGUAGE'] ?? 'en',
   ragMode: 'disabled',
 }

@@ -4,6 +4,7 @@ import type { AgentRole, RiskVerdict, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 
 type RiskManagerConfig = {
   llm: ILLMProvider
@@ -32,7 +33,9 @@ export class RiskManager implements IAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: withLanguage(`You are a risk manager reviewing whether a concrete trader proposal should be approved for ${report.ticker}.
+        content: withLanguage(`${tickerPreservationInstruction(report.ticker)}
+
+You are a risk manager reviewing whether a concrete trader proposal should be approved for ${report.ticker}.
 ${context}
 Review the proposal against the current risk profile. Use blockers for hard rejection reasons and requiredAdjustments for conditions that would make the setup acceptable.
 Respond with ONLY a JSON object matching this schema:

@@ -12,11 +12,28 @@ function mockLLM(response: string): ILLMProvider {
   }
 }
 
-function mockRiskAnalyst(report: TradingReport): IAgent {
+function mockRiskAnalyst(report: TradingReport, analystName = 'riskAnalyst'): IAgent {
   return {
-    name: 'riskAnalyst',
+    name: analystName,
     role: 'risk',
-    run: vi.fn().mockResolvedValue(report),
+    run: vi.fn().mockResolvedValue({
+      ...report,
+      analysisArtifacts: [
+        ...(report.analysisArtifacts ?? []),
+        ...(report.riskAssessment
+          ? [{
+              stage: 'risk' as const,
+              agent: analystName,
+              summary: `${analystName} assessment`,
+              payload: {
+                riskLevel: report.riskAssessment.riskLevel,
+                maxPositionSize: report.riskAssessment.maxPositionSize,
+                reasoning: `${analystName} reasoning`,
+              },
+            }]
+          : []),
+      ],
+    }),
   }
 }
 
@@ -81,9 +98,9 @@ describe('PortfolioManager', () => {
     const agent = new PortfolioManager({
       llm: mockLLM('not json'),
       riskAnalysts: [
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
+        mockRiskAnalyst(analystReport, 'aggressive'),
+        mockRiskAnalyst(analystReport, 'conservative'),
+        mockRiskAnalyst(analystReport, 'neutral'),
       ],
     })
 
@@ -109,9 +126,9 @@ describe('PortfolioManager', () => {
     const agent = new PortfolioManager({
       llm: mockLLM('{"riskLevel":"severe","maxPositionSize":"0.12","stopLoss":"145","takeProfit":165,"reasoning":42}'),
       riskAnalysts: [
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
+        mockRiskAnalyst(analystReport, 'aggressive'),
+        mockRiskAnalyst(analystReport, 'conservative'),
+        mockRiskAnalyst(analystReport, 'neutral'),
       ],
     })
 
@@ -134,9 +151,9 @@ describe('PortfolioManager', () => {
     const agent = new PortfolioManager({
       llm: mockLLM('{"riskLevel":"low","maxPositionSize":1.2,"stopLoss":-145,"takeProfit":0,"reasoning":"invalid domain"}'),
       riskAnalysts: [
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
+        mockRiskAnalyst(analystReport, 'aggressive'),
+        mockRiskAnalyst(analystReport, 'conservative'),
+        mockRiskAnalyst(analystReport, 'neutral'),
       ],
     })
 
@@ -163,9 +180,9 @@ describe('PortfolioManager', () => {
     const agent = new PortfolioManager({
       llm,
       riskAnalysts: [
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
-        mockRiskAnalyst(analystReport),
+        mockRiskAnalyst(analystReport, 'aggressive'),
+        mockRiskAnalyst(analystReport, 'conservative'),
+        mockRiskAnalyst(analystReport, 'neutral'),
       ],
     })
 

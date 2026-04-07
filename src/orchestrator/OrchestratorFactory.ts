@@ -21,9 +21,11 @@ import { AggressiveRiskAnalyst } from '../agents/risk/AggressiveRiskAnalyst.js'
 import { ConservativeRiskAnalyst } from '../agents/risk/ConservativeRiskAnalyst.js'
 import { NeutralRiskAnalyst } from '../agents/risk/NeutralRiskAnalyst.js'
 import { PortfolioManager } from '../agents/risk/PortfolioManager.js'
+import { RiskDebateEngine } from '../agents/risk/RiskDebateEngine.js'
 import { Manager } from '../agents/manager/Manager.js'
 import { DataFetcher } from '../agents/data/DataFetcher.js'
 import { TechnicalAnalyzer } from '../agents/analyzer/TechnicalAnalyzer.js'
+import type { PerAgentMemoryStore } from '../rag/PerAgentMemoryStore.js'
 import { setOutputLanguage } from '../utils/i18n.js'
 
 type LLMMap = {
@@ -48,6 +50,8 @@ type FactoryDeps = {
   embedder?: IEmbedder
   dataSource?: IDataSource
   spyDataSource?: IDataSource
+  /** Per-agent isolated memory stores for lesson retrieval */
+  perAgentMemory?: PerAgentMemoryStore
 }
 
 const ANALYST_BUILDERS: Record<AnalystType, (deps: FactoryDeps) => IAgent> = {
@@ -56,12 +60,14 @@ const ANALYST_BUILDERS: Record<AnalystType, (deps: FactoryDeps) => IAgent> = {
       llm: deps.llms.bull,
       vectorStore: deps.vectorStore,
       embedder: deps.embedder,
+      lessonStore: deps.perAgentMemory?.getStore('bull'),
     }),
   bear: (deps) =>
     new BearResearcher({
       llm: deps.llms.bear,
       vectorStore: deps.vectorStore,
       embedder: deps.embedder,
+      lessonStore: deps.perAgentMemory?.getStore('bear'),
     }),
   news: (deps) =>
     new NewsAnalyst({
@@ -153,14 +159,21 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
   let riskTeam: IAgent[]
 
   if (pipelineConfig.riskDebateEnabled) {
-    const riskAnalysts: IAgent[] = [
-      new AggressiveRiskAnalyst({ llm: llms.riskAnalyst }),
-      new ConservativeRiskAnalyst({ llm: llms.riskAnalyst }),
-      new NeutralRiskAnalyst({ llm: llms.riskAnalyst }),
-    ]
+    const aggressive = new AggressiveRiskAnalyst({ llm: llms.riskAnalyst })
+    const conservative = new ConservativeRiskAnalyst({ llm: llms.riskAnalyst })
+    const neutral = new NeutralRiskAnalyst({ llm: llms.riskAnalyst })
+
+    const debateEngine = new RiskDebateEngine({
+      aggressive,
+      conservative,
+      neutral,
+      maxRounds: pipelineConfig.maxRiskDebateRounds,
+    })
+
     const portfolioManager = new PortfolioManager({
       llm: llms.portfolioManager ?? llms.riskManager,
-      riskAnalysts,
+      riskAnalysts: [aggressive, conservative, neutral],
+      debateEngine,
     })
     riskTeam = [portfolioManager]
   } else {
@@ -206,6 +219,7 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
       llm: llms.manager,
       vectorStore: deps.vectorStore,
       embedder: deps.embedder,
+      lessonStore: deps.perAgentMemory?.getStore('portfolio_manager'),
     }),
     bullResearcher,
     bearResearcher,

@@ -5,6 +5,8 @@ import type { AgentRole, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
+import type { RiskDebateEngine } from './RiskDebateEngine.js'
 import { createLogger } from '../../utils/logger.js'
 
 const log = createLogger('portfolio-manager')
@@ -14,6 +16,8 @@ type PortfolioManagerConfig = {
   llm: ILLMProvider
   /** The three risk analyst agents whose assessments to synthesize */
   riskAnalysts: IAgent[]
+  /** Optional: debate engine for multi-round risk debate */
+  debateEngine?: RiskDebateEngine
 }
 
 type SynthesizedRisk = {
@@ -38,24 +42,46 @@ export class PortfolioManager implements IAgent {
 
   private readonly llm: ILLMProvider
   private readonly riskAnalysts: IAgent[]
+  private readonly debateEngine?: RiskDebateEngine
 
   constructor(config: PortfolioManagerConfig) {
     this.llm = config.llm
     this.riskAnalysts = config.riskAnalysts
+    this.debateEngine = config.debateEngine
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
-    // Run all risk analysts in parallel
-    const results = await Promise.all(
-      this.riskAnalysts.map((analyst) => analyst.run({ ...report }))
+    // When debate engine is available, run multi-round debate instead of parallel
+    let debatedReport: TradingReport
+    if (this.debateEngine) {
+      debatedReport = await this.debateEngine.debate(report)
+    } else {
+      // Run all risk analysts in parallel (original behavior)
+      const results = await Promise.all(
+        this.riskAnalysts.map((analyst) => analyst.run({ ...report }))
+      )
+      // Merge all artifacts and pick the last assessment
+      debatedReport = {
+        ...report,
+        riskAssessment: results.find((r) => r.riskAssessment)?.riskAssessment,
+        analysisArtifacts: [
+          ...(report.analysisArtifacts ?? []),
+          ...results.flatMap((r) => r.analysisArtifacts ?? []).filter((a) => a.stage === 'risk'),
+        ],
+      }
+    }
+
+    // Collect all risk assessments from artifacts for synthesis prompt
+    const riskArtifacts = (debatedReport.analysisArtifacts ?? []).filter(
+      (a) => a.stage === 'risk' && a.agent !== this.name,
     )
 
-    const assessments = results
-      .map((r) => ({
-        name: r.riskAssessment ? 'analyst' : 'unknown',
-        assessment: r.riskAssessment,
-      }))
-      .filter((a) => a.assessment != null)
+    const assessments = riskArtifacts
+      .map((a) => {
+        const payload = a.payload as { riskLevel?: string; maxPositionSize?: number } | undefined
+        return payload?.riskLevel ? { name: a.agent, payload } : null
+      })
+      .filter((a) => a != null)
 
     if (assessments.length === 0) {
       log.warn('No risk assessments produced, failing closed')
@@ -66,10 +92,10 @@ export class PortfolioManager implements IAgent {
         requiredAdjustments: [],
       }
       return {
-        ...report,
+        ...debatedReport,
         riskVerdict,
         analysisArtifacts: [
-          ...(report.analysisArtifacts ?? []),
+          ...(debatedReport.analysisArtifacts ?? []),
           {
             stage: 'risk',
             agent: this.name,
@@ -80,11 +106,13 @@ export class PortfolioManager implements IAgent {
       }
     }
 
-    // Use the first assessment's metrics as the canonical risk metrics
-    const canonicalMetrics = assessments[0]!.assessment!.metrics
+    // Use the debated report's risk metrics (set by the last analyst to run)
+    const canonicalMetrics = debatedReport.riskAssessment?.metrics ?? {
+      VaR: 0, volatility: 0, beta: 1, maxDrawdown: 0,
+    }
 
     // Synthesize via LLM
-    const synthesized = await this.synthesize(report, results)
+    const synthesized = await this.synthesize(debatedReport, assessments)
     const riskVerdict = {
       approved: synthesized.isValid ? synthesized.approved : false,
       summary: synthesized.summary,
@@ -93,7 +121,7 @@ export class PortfolioManager implements IAgent {
     }
 
     return {
-      ...report,
+      ...debatedReport,
       riskAssessment: {
         riskLevel: synthesized.riskLevel,
         metrics: canonicalMetrics,
@@ -103,7 +131,7 @@ export class PortfolioManager implements IAgent {
       },
       riskVerdict,
       analysisArtifacts: [
-        ...(report.analysisArtifacts ?? []),
+        ...(debatedReport.analysisArtifacts ?? []),
         {
           stage: 'risk',
           agent: this.name,
@@ -116,18 +144,12 @@ export class PortfolioManager implements IAgent {
 
   private async synthesize(
     report: TradingReport,
-    analystResults: TradingReport[],
+    assessments: Array<{ name: string; payload: { riskLevel?: string; maxPositionSize?: number; reasoning?: string } }>,
   ): Promise<SynthesizedRisk> {
-    const assessmentBlock = analystResults
-      .map((r) => {
-        const ra = r.riskAssessment
-        if (!ra) return null
-        return `Risk Level: ${ra.riskLevel}, Position Size: ${ra.maxPositionSize ?? 'N/A'}`
-      })
-      .filter(Boolean)
-      .map((desc, i) => {
-        const labels = ['Aggressive', 'Conservative', 'Neutral']
-        return `${labels[i] ?? `Analyst ${i + 1}`}: ${desc}`
+    const assessmentBlock = assessments
+      .map((a) => {
+        const reasoning = a.payload.reasoning ? ` — ${a.payload.reasoning}` : ''
+        return `${a.name}: Risk Level: ${a.payload.riskLevel}, Position Size: ${a.payload.maxPositionSize ?? 'N/A'}${reasoning}`
       })
       .join('\n')
     const proposalBlock = report.traderProposal
@@ -161,7 +183,9 @@ export class PortfolioManager implements IAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: withLanguage(`You are a Portfolio Manager synthesizing risk assessments from three analysts with different risk philosophies for ${report.ticker}.
+        content: withLanguage(`${tickerPreservationInstruction(report.ticker)}
+
+You are a Portfolio Manager synthesizing risk assessments from three analysts with different risk philosophies for ${report.ticker}.
 
 RISK ASSESSMENTS:
 ${assessmentBlock}

@@ -8,11 +8,14 @@ import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { buildSetupQuery } from '../../analysis/buildSetupQuery.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 
 type ManagerConfig = {
   llm: ILLMProvider
   vectorStore?: IVectorStore
   embedder?: IEmbedder
+  /** Separate store for lesson retrieval (per-agent memory isolation) */
+  lessonStore?: IVectorStore
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,11 +47,13 @@ export class Manager implements IAgent {
   private llm: ILLMProvider
   private vectorStore?: IVectorStore
   private embedder?: IEmbedder
+  private lessonStore?: IVectorStore
 
   constructor(config: ManagerConfig) {
     this.llm = config.llm
     this.vectorStore = config.vectorStore
     this.embedder = config.embedder
+    this.lessonStore = config.lessonStore
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
@@ -64,7 +69,9 @@ export class Manager implements IAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: withLanguage(`You are a senior portfolio manager making a final trading decision for ${report.ticker}.
+        content: withLanguage(`${tickerPreservationInstruction(report.ticker)}
+
+You are a senior portfolio manager making a final trading decision for ${report.ticker}.
 ${fullContext}
 Weigh the bull and bear evidence against the risk assessment. Make a final recommendation using the 5-tier scale:
 - BUY: Strong conviction to enter/add a long position
@@ -105,13 +112,14 @@ Respond with ONLY a JSON object matching this schema:
 
   private async retrieveLessons(report: TradingReport): Promise<string> {
     const query = buildSetupQuery(report)
-    if (!this.vectorStore) return ''
-    const docs = supportsTextSearch(this.vectorStore)
-      ? await this.vectorStore.searchText(query, 3, {
+    const store = this.lessonStore ?? this.vectorStore
+    if (!store) return ''
+    const docs = supportsTextSearch(store)
+      ? await store.searchText(query, 3, {
           must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
         })
       : this.embedder
-        ? await this.vectorStore.search(await this.embedder.embed(query), 3, {
+        ? await store.search(await this.embedder.embed(query), 3, {
             must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
           })
         : []

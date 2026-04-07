@@ -10,7 +10,7 @@ import type { Market, TradingReport } from './agents/base/types.js'
 import type { AnalysisRunRepository } from './analysis/AnalysisRunRepository.js'
 import { getErrorMessage } from './utils/errors.js'
 import { createLogger } from './utils/logger.js'
-import { formatConsoleAnalysisSummary, saveAnalysisReport } from './reports/AnalysisReport.js'
+import { formatConsoleAnalysisOutput, saveAnalysisReport } from './reports/AnalysisReport.js'
 import { buildDataSourceChain, buildRAGDeps } from './cli/bootstrap.js'
 
 const log = createLogger('run')
@@ -36,7 +36,7 @@ const resolvedMarket: Market = market && VALID_MARKETS.has(market) ? market : 'U
 log.info({ ticker, market: resolvedMarket }, 'Analyzing stock')
 
 const fallbackSource = buildDataSourceChain('price-chain')
-const { ragMode, vectorStore, embedder } = buildRAGDeps()
+const { ragMode, vectorStore, embedder, perAgentMemory } = buildRAGDeps()
 
 if (ragMode === 'qdrant') {
   log.info('RAG: Qdrant + OpenAI embeddings')
@@ -57,6 +57,7 @@ const orchestrator = buildOrchestrator({
   pipelineConfig: { ...DEFAULT_PIPELINE_CONFIG, ragMode },
   vectorStore,
   embedder,
+  perAgentMemory,
   dataSource: fallbackSource,
   spyDataSource: fallbackSource,
 })
@@ -95,46 +96,7 @@ try {
   })
   latestReport = report
 
-  const separator = '='.repeat(60)
-  const lines = [`\n${separator}`, `FINAL DECISION: ${report.ticker} (${report.market})`, separator]
-  const stageSummary = formatConsoleAnalysisSummary(report)
-
-  if (stageSummary) {
-    lines.push(stageSummary)
-    lines.push('')
-  }
-
-  if (report.finalDecision) {
-    const d = report.finalDecision
-    lines.push(`Action:      ${d.action}`)
-    lines.push(`Confidence:  ${(d.confidence * 100).toFixed(0)}%`)
-    lines.push(`Reasoning:   ${d.reasoning}`)
-    if (d.suggestedPositionSize != null)
-      lines.push(`Position:    ${(d.suggestedPositionSize * 100).toFixed(1)}% of portfolio`)
-    if (d.stopLoss != null) lines.push(`Stop loss:   $${d.stopLoss}`)
-    if (d.takeProfit != null) lines.push(`Take profit: $${d.takeProfit}`)
-  } else {
-    lines.push('No decision produced.')
-  }
-
-  if (report.computedIndicators) {
-    const ci = report.computedIndicators
-    lines.push('\nComputed Indicators:')
-    lines.push(`  RSI: ${ci.momentum.rsi.toFixed(1)} | MACD: ${ci.trend.macd.line.toFixed(2)} | Beta: ${ci.risk.beta.toFixed(2)}`)
-    lines.push(`  Volatility: ${(ci.volatility.historicalVolatility * 100).toFixed(1)}% | MaxDD: ${(ci.risk.maxDrawdown * 100).toFixed(1)}% | VaR95: ${(ci.risk.var95 * 100).toFixed(2)}%`)
-  }
-
-  lines.push('\nResearch findings:')
-  for (const f of report.researchFindings) {
-    lines.push(`  [${f.agentName}] ${f.stance} (${(f.confidence * 100).toFixed(0)}%) — ${f.evidence.slice(0, 2).join('; ')}`)
-  }
-
-  if (report.riskAssessment) {
-    const ra = report.riskAssessment
-    lines.push(`\nRisk: ${ra.riskLevel} | VaR: ${(ra.metrics.VaR * 100).toFixed(2)}% | Volatility: ${(ra.metrics.volatility * 100).toFixed(1)}%`)
-  }
-
-  log.info(lines.join('\n'))
+  log.info(formatConsoleAnalysisOutput(report))
 
   // Save markdown report
   const reportPath = saveAnalysisReport(report)

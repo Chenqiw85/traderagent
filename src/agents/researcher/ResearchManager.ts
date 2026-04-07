@@ -5,6 +5,7 @@ import type { AgentRole, AnalysisArtifact, Finding, ResearchThesis, TradingRepor
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 import { createLogger } from '../../utils/logger.js'
 
 const log = createLogger('research-manager')
@@ -110,7 +111,9 @@ export class ResearchManager implements IAgent {
         `${f.agentName} (confidence: ${f.confidence.toFixed(2)}): ${f.evidence.join('; ')}`
       ).join('\n')
 
-    const prompt = withLanguage(`You are a Research Manager synthesizing a structured bull-bear debate about ${report.ticker}.
+    const prompt = withLanguage(`${tickerPreservationInstruction(report.ticker)}
+
+You are a Research Manager synthesizing a structured bull-bear debate about ${report.ticker}.
 
 BULL ARGUMENTS:
 ${formatFindings(bullFindings) || '(none)'}

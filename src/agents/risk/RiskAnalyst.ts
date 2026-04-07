@@ -3,6 +3,7 @@ import type { AgentRole, RiskAssessment, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
+import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 
 type RiskAnalystConfig = {
   llm: ILLMProvider
@@ -37,7 +38,9 @@ export class RiskAnalyst implements IAgent {
     const response = await this.llm.chat([
       {
         role: 'system',
-        content: withLanguage(`You are a quantitative risk analyst. The risk metrics below were computed from actual market data — do NOT recalculate them. Your job is to interpret these metrics and determine the overall risk level.
+        content: withLanguage(`${tickerPreservationInstruction(report.ticker)}
+
+You are a quantitative risk analyst. The risk metrics below were computed from actual market data — do NOT recalculate them. Your job is to interpret these metrics and determine the overall risk level.
 ${context}
 Respond with ONLY a JSON object:
 {
