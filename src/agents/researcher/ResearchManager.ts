@@ -3,6 +3,7 @@
 import type { IAgent } from '../base/IAgent.js'
 import type { AgentRole, AnalysisArtifact, Finding, ResearchThesis, TradingReport } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
+import type { Conflict, Resolution } from '../../types/quality.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
 import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
@@ -111,9 +112,30 @@ export class ResearchManager implements IAgent {
         `${f.agentName} (confidence: ${f.confidence.toFixed(2)}): ${f.evidence.join('; ')}`
       ).join('\n')
 
+    const conflictsSection = (report.conflicts?.length ?? 0) > 0
+      ? `
+## DETECTED CONFLICTS
+
+The following conflicts were detected between bull and bear researchers. Each has been resolved — use these resolutions to weight your synthesis.
+
+${(report.conflicts ?? []).map((c: Conflict, i: number) => {
+  const resolution = (report.conflictResolutions ?? []).find((r: Resolution) => r.conflict.metric === c.metric)
+  return `### Conflict ${i + 1}: ${c.metric}
+- Bull claim: ${c.bullClaim}
+- Bear claim: ${c.bearClaim}
+- Is contradiction: ${c.isContradiction}
+- Severity: ${c.severity}
+${resolution ? `- Resolution: winner=${resolution.winner}, reasoning: ${resolution.reasoning}
+- Adjusted confidence: bull=${resolution.adjustedConfidence.bull}, bear=${resolution.adjustedConfidence.bear}` : '- Resolution: pending'}`
+}).join('\n\n')}
+
+When synthesizing, give more weight to the winning side of each resolved conflict. If winner is "both_valid", acknowledge both perspectives.
+`
+      : ''
+
     const prompt = withLanguage(`${tickerPreservationInstruction(report.ticker)}
 
-You are a Research Manager synthesizing a structured bull-bear debate about ${report.ticker}.
+You are a Research Manager synthesizing a structured bull-bear debate about ${report.ticker}. Your job is to be the impartial arbiter who determines which side has stronger evidence.
 
 BULL ARGUMENTS:
 ${formatFindings(bullFindings) || '(none)'}
@@ -121,30 +143,56 @@ ${formatFindings(bullFindings) || '(none)'}
 BEAR ARGUMENTS:
 ${formatFindings(bearFindings) || '(none)'}
 
-${otherFindings.length > 0 ? `OTHER ANALYSIS:\n${formatFindings(otherFindings)}` : ''}
+${otherFindings.length > 0 ? `OTHER ANALYSIS:\n${formatFindings(otherFindings)}` : ''}${conflictsSection}
 
-INSTRUCTIONS:
-- Weigh the strength of evidence from both sides
-- Identify which arguments are supported by data vs speculation
-- Determine the overall investment stance and write a concise thesis summary
-- Identify the most important drivers, risks, and invalidation conditions
-- Choose a realistic time horizon for the thesis
+SYNTHESIS METHODOLOGY — follow these steps:
+
+STEP 1: EVIDENCE QUALITY SCORING
+For each argument from both sides, classify as:
+- DATA-BACKED (cites specific numbers from indicators/fundamentals): weight 1.0
+- DATA-INFERRED (reasonable conclusion from available data): weight 0.7
+- SPECULATIVE (opinion without supporting data): weight 0.3
+- CONTRADICTED (conflicts with actual data shown): weight 0.0
+
+STEP 2: CONSISTENCY CHECK
+- Do any bull arguments contradict bear arguments using the SAME data point? If so, determine which interpretation is more sound
+- Does any analyst have high confidence (>0.7) despite citing weak or speculative evidence? Flag this as unreliable
+- Example: A bull case citing "SMA50 > SMA200" is valid, but if price is BELOW both SMAs, the bullish signal is weakened
+
+STEP 3: NET ASSESSMENT
+- Sum weighted bull evidence strength vs weighted bear evidence strength
+- The side with stronger DATA-BACKED arguments should generally prevail
+- If both sides are roughly equal, stance should be neutral with moderate confidence
+- A single DATA-BACKED critical risk (e.g., extreme P/E >100 with negative growth) can override multiple weaker bullish signals
+
+STEP 4: CONFIDENCE CALIBRATION
+- 0.8-1.0: One side overwhelmingly supported by data, other side mostly speculative
+- 0.6-0.8: Clear lean with some valid counterpoints
+- 0.4-0.6: Genuinely mixed evidence, could go either way
+- 0.2-0.4: Slight lean but low conviction
+- 0.0-0.2: Insufficient data to form a view
+
+RULES:
+- Your summary MUST explain WHY you chose the stance — which specific evidence was decisive
+- keyDrivers should only include DATA-BACKED or DATA-INFERRED points
+- keyRisks should include the strongest arguments from the opposing side
+- invalidationConditions must be specific and measurable (price levels, indicator thresholds)
 
 Respond with ONLY a JSON object:
 {
   "stance": "bull" | "bear" | "neutral",
   "confidence": <number 0-1>,
-  "summary": "<concise thesis paragraph>",
+  "summary": "<thesis paragraph explaining which evidence was decisive and why>",
   "keyDrivers": ["<driver 1>", "<driver 2>", "..."],
   "keyRisks": ["<risk 1>", "<risk 2>", "..."],
-  "invalidationConditions": ["<condition 1>", "<condition 2>", "..."],
+  "invalidationConditions": ["<measurable condition 1>", "<measurable condition 2>", "..."],
   "timeHorizon": "short" | "swing" | "position"
 }`)
 
     try {
       const response = await this.llm.chat([
         { role: 'system', content: prompt },
-        { role: 'user', content: `Synthesize the debate for ${report.ticker}. JSON only.` },
+        { role: 'user', content: `Synthesize the debate for ${report.ticker}. JSON only.${conflictsSection}` },
       ])
 
       const parsed = parseJson<unknown>(response)

@@ -102,10 +102,13 @@ DECISION DETAILS:
 - Hit Stop Loss: ${decision.hitStopLoss}
 
 Score Breakdown:
-- Directional: ${decision.breakdown.directional}
-- Target Hit: ${decision.breakdown.targetHit}
-- Calibration: ${decision.breakdown.calibration.toFixed(3)}
-- Hold Penalty: ${decision.breakdown.holdPenalty}
+- Realized Tier: ${decision.breakdown.realizedTier}
+- Exact Tier Hit: ${decision.breakdown.exactTierHit}
+- Tier Distance: ${decision.breakdown.tierDistanceScore.toFixed(3)}
+- Directional: ${decision.breakdown.directionalScore.toFixed(3)}
+- Calibration: ${decision.breakdown.calibrationScore.toFixed(3)}
+- Hold Quality: ${decision.breakdown.holdQualityScore.toFixed(3)}
+- Risk Execution: ${decision.breakdown.riskExecutionScore.toFixed(3)}
 
 Analyze what went right, what went wrong, and what should be adjusted.
 

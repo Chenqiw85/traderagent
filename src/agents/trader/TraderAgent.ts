@@ -6,9 +6,11 @@ import { CompositeScorer } from './CompositeScorer.js'
 import { LessonExtractor } from './LessonExtractor.js'
 import { LessonsJournal } from './LessonsJournal.js'
 import { ReflectionEngine } from './ReflectionEngine.js'
-import type { OhlcvBar, PassResult, ScoredDecision, TrainConfig, WindowResult } from './types.js'
+import type { OhlcvBar, PassResult, ScoredDecision, TrainConfig, TrainResult, WindowResult } from './types.js'
 import type { Orchestrator } from '../../orchestrator/Orchestrator.js'
 import { createLogger } from '../../utils/logger.js'
+import { summarizeCredibility } from './CredibilityAnalyzer.js'
+import { ThresholdCalibrator } from '../manager/ThresholdCalibrator.js'
 
 const log = createLogger('trader-agent')
 
@@ -42,7 +44,7 @@ export class TraderAgent {
     this.ohlcvBars = config.ohlcvBars
   }
 
-  async train(config: TrainConfig): Promise<PassResult[]> {
+  async train(config: TrainConfig): Promise<TrainResult> {
     const scorer = new CompositeScorer({ evaluationDays: config.evaluationDays })
     const windows = this.buildWindows()
     const results: PassResult[] = []
@@ -82,8 +84,8 @@ export class TraderAgent {
           log.info({ ticker: config.ticker, count: reflections.length, pass: passNumber }, 'Reflections generated')
           // Store reflections as lessons in the journal for future retrieval
           const reflectionLessons = reflections.flatMap((r) =>
-            r.adjustments.map((adj) => ({
-              id: r.id + '-adj',
+            r.adjustments.map((adj, adjustmentIndex) => ({
+              id: `pass-${r.passNumber}-${r.id}-adj-${adjustmentIndex}`,
               condition: `${r.action} on ${r.date} with return ${(r.actualReturn * 100).toFixed(1)}%`,
               lesson: adj,
               evidence: `Score: ${r.compositeScore.toFixed(3)}. Failed: ${r.whatFailed.join('; ')}`,
@@ -91,6 +93,8 @@ export class TraderAgent {
               passNumber: r.passNumber,
               ticker: r.ticker,
               market: r.market,
+              source: 'reflection' as const,
+              perspective: 'shared' as const,
             })),
           )
           await this.lessonsJournal.store(reflectionLessons)
@@ -126,7 +130,22 @@ export class TraderAgent {
       }
     }
 
-    return results
+    // Calibrate thresholds from scored training decisions
+    const allTrainDecisions = results.flatMap((p) =>
+      p.windows.filter((w) => w.windowType === 'train').flatMap((w) => w.decisions)
+    )
+
+    let calibratedThresholds: TrainResult['calibratedThresholds']
+    if (allTrainDecisions.length >= 20) {
+      const calibrator = new ThresholdCalibrator()
+      calibratedThresholds = calibrator.calibrate(allTrainDecisions)
+      log.info(
+        { sampleSize: calibratedThresholds.sampleSize, confidence: calibratedThresholds.calibrationConfidence },
+        'Calibrated thresholds from training decisions',
+      )
+    }
+
+    return { passes: results, calibratedThresholds }
   }
 
   private buildWindows(): {
@@ -150,7 +169,7 @@ export class TraderAgent {
     windowType: 'train' | 'test',
     decisions: ScoredDecision[],
   ): WindowResult {
-    const wins = decisions.filter((decision) => decision.breakdown.directional === 1).length
+    const wins = decisions.filter((decision) => decision.breakdown.directionalScore >= 0.75).length
     return {
       label,
       windowType,
@@ -158,6 +177,7 @@ export class TraderAgent {
       winRate: decisions.length === 0 ? 0 : wins / decisions.length,
       compositeScore: this.averageScore(decisions),
       decisions,
+      credibility: summarizeCredibility(decisions),
     }
   }
 

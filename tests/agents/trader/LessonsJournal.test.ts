@@ -29,6 +29,8 @@ function makeLesson(overrides: Partial<LessonEntry> = {}): LessonEntry {
     passNumber: 1,
     ticker: 'AAPL',
     market: 'US',
+    source: 'extractor',
+    perspective: 'shared',
     ...overrides,
   }
 }
@@ -50,6 +52,8 @@ describe('LessonsJournal', () => {
         ticker: 'AAPL',
         market: 'US',
         passNumber: 1,
+        source: 'extractor',
+        perspective: 'shared',
       }),
     )
   })

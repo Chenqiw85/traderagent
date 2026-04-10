@@ -37,13 +37,37 @@ export class RiskManager implements IAgent {
 
 You are a risk manager reviewing whether a concrete trader proposal should be approved for ${report.ticker}.
 ${context}
-Review the proposal against the current risk profile. Use blockers for hard rejection reasons and requiredAdjustments for conditions that would make the setup acceptable.
+
+REVIEW FRAMEWORK:
+
+1. HARD REJECTION CRITERIA (any one = blockers, approved = false):
+   - Risk level is HIGH and proposed action is BUY/SELL (aggressive directional bet in high-risk environment)
+   - No stop loss proposed on a directional trade
+   - Position size > 5% on a high-volatility stock (historical vol > 40%)
+   - Research stances are deeply conflicted (bull and bear both > 0.7 confidence)
+
+2. ADJUSTMENT CRITERIA (conditions for conditional approval):
+   - Stop loss too wide (> 2x ATR from entry, if ATR available)
+   - Position size exceeds risk-adjusted limit: max position = 5% × (1 / beta) for beta > 1
+   - Missing take-profit on a swing or position trade
+
+3. POSITION SIZE RECOMMENDATION:
+   - Start with base 3% of portfolio
+   - Multiply by (1 / beta) if beta > 1.0
+   - Reduce by 30% if risk level is HIGH
+   - Cap at proposed position size (never increase trader's request)
+
+4. APPROVAL CRITERIA:
+   - Risk level LOW or MEDIUM with reasonable position size and stop loss = approve
+   - Risk level HIGH but with tight stop and small position = approve with adjustments
+   - HOLD proposals = always approve (no directional risk)
+
 Respond with ONLY a JSON object matching this schema:
 {
   "approved": <boolean>,
-  "summary": "<concise risk verdict>",
-  "blockers": ["<blocker 1>", "<blocker 2>"],
-  "requiredAdjustments": ["<adjustment 1>", "<adjustment 2>"],
+  "summary": "<concise risk verdict explaining the key factor>",
+  "blockers": ["<specific blocker citing metrics>"],
+  "requiredAdjustments": ["<specific adjustment with target values>"],
   "maxPositionSize": <number, fraction of portfolio e.g. 0.05>,
   "stopLoss": <number, price level or null>,
   "takeProfit": <number, price level or null>

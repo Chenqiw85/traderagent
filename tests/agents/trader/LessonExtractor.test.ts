@@ -16,7 +16,15 @@ function makeScoredDecision(overrides: Partial<ScoredDecision> = {}): ScoredDeci
     actualReturn: 0.05,
     hitTakeProfit: false,
     hitStopLoss: false,
-    breakdown: { directional: 1, targetHit: 0.5, calibration: 0.8, holdPenalty: 1 },
+    breakdown: {
+      realizedTier: 'BUY',
+      exactTierHit: true,
+      tierDistanceScore: 1,
+      directionalScore: 1,
+      calibrationScore: 0.8,
+      holdQualityScore: 1,
+      riskExecutionScore: 0.5,
+    },
     compositeScore: 0.8,
     ...overrides,
   }
@@ -93,6 +101,12 @@ describe('LessonExtractor', () => {
     const chatCall = vi.mocked(llm.chat).mock.calls[0]
     const systemPrompt = chatCall?.[0]?.[0]?.content
     expect(systemPrompt).toContain('AAPL')
-    expect(systemPrompt).toContain('BUY')
+    expect(systemPrompt).toContain('Summary: 1 decisions, 1 directional wins, 0 directional losses, 0 holds')
+    expect(systemPrompt).toContain('Exact tier hits: 1')
+    expect(systemPrompt).toContain(
+      'realized=BUY exact=true dist=1.000 dir=1.000 cal=0.800 hold=1.000 risk=0.500',
+    )
+    expect(systemPrompt).not.toContain('targetHit')
+    expect(systemPrompt).not.toContain('holdPenalty')
   })
 })

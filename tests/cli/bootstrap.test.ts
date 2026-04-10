@@ -4,7 +4,7 @@ import { QdrantVectorStore } from '../../src/rag/qdrant.js'
 
 process.env['DATABASE_URL'] = 'postgres://bootstrap-test'
 
-const { buildDataSourceChain, buildRAGDeps } = await import('../../src/cli/bootstrap.js')
+const { buildDataSourceChain, buildLiveMarketSourceChain, buildRAGDeps } = await import('../../src/cli/bootstrap.js')
 
 describe('cli bootstrap', () => {
   beforeEach(() => {
@@ -32,6 +32,14 @@ describe('cli bootstrap', () => {
     const sources = (chain as unknown as { sources: Array<{ name: string }> }).sources
 
     expect(sources.map((source) => source.name)).toEqual(['yfinance'])
+  })
+
+  it('builds a fallback live market chain with yahoo live as the default source', () => {
+    const chain = buildLiveMarketSourceChain('live-market-chain')
+    const sources = (chain as unknown as { sources: Array<{ name: string }> }).sources
+
+    expect(chain.name).toBe('live-market-chain')
+    expect(sources.map((source) => source.name)).toEqual(['yahoo-live'])
   })
 
   it('builds qdrant dependencies when qdrant env is configured', () => {

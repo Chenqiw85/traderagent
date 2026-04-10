@@ -8,12 +8,46 @@ const DIRECTION_ICON: Record<MarketTrend['direction'], string> = {
   neutral: '🟡',
 }
 
+const FORECAST_ICON: Record<string, string> = {
+  up: '🟢 ↑ UP',
+  down: '🔴 ↓ DOWN',
+  flat: '🟡 → FLAT',
+}
+
 const ACTION_ICON: Record<string, string> = {
   BUY: '🟢 BUY',
   OVERWEIGHT: '🔵 OVERWEIGHT',
   HOLD: '🟡 HOLD',
   UNDERWEIGHT: '🟠 UNDERWEIGHT',
   SELL: '🔴 SELL',
+}
+
+function titleCase(value: string): string {
+  return value.length > 0
+    ? `${value[0].toUpperCase()}${value.slice(1)}`
+    : value
+}
+
+function formatLegacyAdvisory(lines: string[], advisory: TickerAdvisory): void {
+  const actionIcon = ACTION_ICON[advisory.decision.action] ?? advisory.decision.action
+  const confidence = `${(advisory.decision.confidence * 100).toFixed(0)}%`
+  lines.push(`${actionIcon} *${advisory.ticker}* (${confidence} confidence)`)
+  lines.push(`   ${advisory.decision.reasoning}`)
+  if (advisory.decision.stopLoss != null) {
+    lines.push(`   SL: $${advisory.decision.stopLoss} | TP: $${advisory.decision.takeProfit ?? 'N/A'}`)
+  }
+  if (advisory.dailyUpdate) {
+    const d = advisory.dailyUpdate.indicatorDelta
+    const prevAction = advisory.dailyUpdate.previousDecision.action
+    const changed = prevAction !== advisory.decision.action
+    lines.push(`   ${changed ? '⚡ CHANGED' : '→ Unchanged'} from ${prevAction}`)
+    lines.push(`   Price: $${d.closePrev.toFixed(2)} → $${d.closeNow.toFixed(2)} (${d.changePercent >= 0 ? '+' : ''}${d.changePercent.toFixed(2)}%)`)
+    lines.push(`   ${advisory.dailyUpdate.deltaReasoning}`)
+  }
+  if (advisory.keyFindings.length > 0) {
+    lines.push(`   Key: ${advisory.keyFindings.slice(0, 2).join('; ')}`)
+  }
+  lines.push('')
 }
 
 export function formatAdvisorReport(report: AdvisorReport): string {
@@ -41,14 +75,24 @@ export function formatAdvisorReport(report: AdvisorReport): string {
 
   // Ticker Recommendations
   if (report.tickerAdvisories.length > 0) {
-    lines.push('━━━ *Recommendations* ━━━')
+    const hasForecasts = report.tickerAdvisories.some((advisory) => advisory.forecast)
+    lines.push(hasForecasts ? '━━━ *Next-Day Forecasts* ━━━' : '━━━ *Recommendations* ━━━')
     for (const advisory of report.tickerAdvisories) {
-      const actionIcon = ACTION_ICON[advisory.decision.action] ?? advisory.decision.action
-      const confidence = `${(advisory.decision.confidence * 100).toFixed(0)}%`
-      lines.push(`${actionIcon} *${advisory.ticker}* (${confidence} confidence)`)
-      lines.push(`   ${advisory.decision.reasoning}`)
-      if (advisory.decision.stopLoss != null) {
-        lines.push(`   SL: $${advisory.decision.stopLoss} | TP: $${advisory.decision.takeProfit ?? 'N/A'}`)
+      if (!advisory.forecast) {
+        formatLegacyAdvisory(lines, advisory)
+        continue
+      }
+
+      const forecast = advisory.forecast
+      const forecastIcon = FORECAST_ICON[forecast.predictedDirection] ?? forecast.predictedDirection.toUpperCase()
+      const confidence = `${(forecast.confidence * 100).toFixed(0)}%`
+      const baselineAction = advisory.baselineDecision?.action ?? advisory.decision.action
+      lines.push(`${forecastIcon} *${advisory.ticker}* (${confidence} confidence)`)
+      lines.push(`   Target: ${forecast.targetSession} | Ref: $${forecast.referencePrice.toFixed(2)} → $${forecast.targetPrice.toFixed(2)}`)
+      lines.push(`   Baseline: ${baselineAction} | Change: ${titleCase(forecast.changeFromBaseline)}`)
+      lines.push(`   ${forecast.reasoning}`)
+      if (forecast.baselineReferencePrice != null) {
+        lines.push(`   Baseline proposal ref: $${forecast.baselineReferencePrice.toFixed(2)}`)
       }
       if (advisory.keyFindings.length > 0) {
         lines.push(`   Key: ${advisory.keyFindings.slice(0, 2).join('; ')}`)

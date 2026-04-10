@@ -44,6 +44,8 @@ export class LessonsJournal {
         market: lesson.market,
         passNumber: lesson.passNumber,
         confidence: lesson.confidence,
+        source: lesson.source,
+        perspective: lesson.perspective,
       },
     }))
 

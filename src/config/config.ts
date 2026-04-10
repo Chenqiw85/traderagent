@@ -34,7 +34,9 @@ export const agentConfig: AgentConfigMap = {
   traderLessonExtractor:      { llm: 'ollama', model: 'llama3.1' },
   // Advisor pipeline — reasoner for synthesis quality
   advisor:              { llm: usingLLM, model: RiskModel },
+  advisorForecastAnalyzer: { llm: usingLLM, model: RiskModel },
   marketTrendAnalyzer:  { llm: usingLLM, model: reacherModel },
+  dailyUpdateAnalyzer:  { llm: usingLLM, model: RiskModel },
 }
 
 export type AnalystType = 'bull' | 'bear' | 'news' | 'fundamentals'

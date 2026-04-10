@@ -2,14 +2,16 @@ import { FinnhubSource } from '../data/finnhub.js'
 import { YFinanceSource } from '../data/yfinance.js'
 import { FallbackDataSource } from '../data/FallbackDataSource.js'
 import { RateLimitedDataSource } from '../data/RateLimitedDataSource.js'
+import { FallbackLiveMarketDataSource } from '../data/FallbackLiveMarketDataSource.js'
+import { YahooLiveMarketSource } from '../data/YahooLiveMarketSource.js'
 import { rateLimitDefaults } from '../config/rateLimits.js'
 import { PostgresDataSource } from '../db/PostgresDataSource.js'
 import { QdrantVectorStore } from '../rag/qdrant.js'
 import { BM25VectorStore } from '../rag/BM25VectorStore.js'
 import { Embedder } from '../rag/embedder.js'
 import { detectRAGMode, getEmbeddingDimension, type RAGMode } from '../config/config.js'
-import { PerAgentMemoryStore } from '../rag/PerAgentMemoryStore.js'
 import type { IDataSource } from '../data/IDataSource.js'
+import type { ILiveMarketDataSource } from '../data/ILiveMarketDataSource.js'
 import type { IEmbedder } from '../rag/IEmbedder.js'
 import type { IVectorStore } from '../rag/IVectorStore.js'
 
@@ -17,8 +19,6 @@ type RAGDeps = {
   ragMode: RAGMode
   vectorStore?: IVectorStore
   embedder?: IEmbedder
-  /** Per-agent isolated memory stores (BM25 mode only) */
-  perAgentMemory?: PerAgentMemoryStore
 }
 
 export function buildDataSourceChain(chainName: string): FallbackDataSource {
@@ -35,6 +35,12 @@ export function buildDataSourceChain(chainName: string): FallbackDataSource {
   dataSources.push(new RateLimitedDataSource(new YFinanceSource(), rateLimitDefaults['yfinance']))
 
   return new FallbackDataSource(chainName, dataSources)
+}
+
+export function buildLiveMarketSourceChain(chainName: string): FallbackLiveMarketDataSource {
+  const liveMarketSources: ILiveMarketDataSource[] = [new YahooLiveMarketSource()]
+
+  return new FallbackLiveMarketDataSource(chainName, liveMarketSources)
 }
 
 export function buildRAGDeps(): RAGDeps {
@@ -60,8 +66,5 @@ export function buildRAGDeps(): RAGDeps {
     vectorStore = new BM25VectorStore()
   }
 
-  // Per-agent memory is only available in BM25 mode (lightweight in-memory stores)
-  const perAgentMemory = ragMode === 'memory' ? new PerAgentMemoryStore() : undefined
-
-  return { ragMode, vectorStore, embedder, perAgentMemory }
+  return { ragMode, vectorStore, embedder }
 }

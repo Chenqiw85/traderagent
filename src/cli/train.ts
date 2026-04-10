@@ -7,6 +7,7 @@ import type { Market } from '../agents/base/types.js'
 import { createLogger } from '../utils/logger.js'
 import { saveTrainerReport } from '../reports/TrainerReport.js'
 import { buildDataSourceChain, buildRAGDeps } from './bootstrap.js'
+import { saveCalibratedThresholds } from '../config/calibratedThresholdStore.js'
 
 const log = createLogger('cli:train')
 
@@ -44,7 +45,7 @@ const market = (marketArg ?? 'US') as Market
 log.info({ ticker, market, maxPasses, lookbackMonths }, 'Trader Training')
 
 const fallbackSource = buildDataSourceChain('price-chain')
-const { ragMode, vectorStore, embedder, perAgentMemory } = buildRAGDeps()
+const { ragMode, vectorStore, embedder } = buildRAGDeps()
 
 const endDate = new Date()
 const startDate = new Date()
@@ -90,7 +91,6 @@ function createOrchestrator(cutoffDate: Date) {
     pipelineConfig: { ...DEFAULT_PIPELINE_CONFIG, ragMode },
     vectorStore,
     embedder,
-    perAgentMemory,
     dataSource: filteredSource,
     spyDataSource: filteredSource,
   })
@@ -105,7 +105,7 @@ const trader = new TraderAgent({
 })
 
 try {
-  const results = await trader.train({
+  const trainResult = await trader.train({
     ticker,
     market,
     maxPasses,
@@ -115,8 +115,24 @@ try {
     earlyStopPatience: 2,
   })
 
-  const finalScore = results[results.length - 1]?.avgTestScore ?? 0
+  const finalScore = trainResult.passes[trainResult.passes.length - 1]?.avgTestScore ?? 0
   log.info({ finalScore: finalScore.toFixed(3) }, 'Training complete')
+
+  if (trainResult.calibratedThresholds) {
+    const thresholdsPath = saveCalibratedThresholds({
+      ticker,
+      market,
+      calibratedThresholds: trainResult.calibratedThresholds,
+    })
+    log.info(
+      {
+        path: thresholdsPath,
+        sampleSize: trainResult.calibratedThresholds.sampleSize,
+        confidence: trainResult.calibratedThresholds.calibrationConfidence,
+      },
+      'Saved calibrated thresholds for live pipeline',
+    )
+  }
 
   // Save markdown report
   const reportPath = saveTrainerReport({
@@ -125,7 +141,7 @@ try {
     maxPasses,
     lookbackMonths,
     evaluationDays: 5,
-    results,
+    results: trainResult.passes,
   })
   log.info({ path: reportPath }, 'Training report saved')
 } catch (error) {

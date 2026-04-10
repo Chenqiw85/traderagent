@@ -59,14 +59,16 @@ export class LessonExtractor {
       return 'Summary: 0 decisions available.'
     }
 
-    const wins = decisions.filter((decision) => decision.breakdown.directional === 1).length
-    const losses = decisions.filter((decision) => decision.breakdown.directional === 0).length
+    const wins = decisions.filter((decision) => decision.breakdown.directionalScore >= 0.75).length
+    const losses = decisions.filter((decision) => decision.breakdown.directionalScore <= 0.25).length
     const holds = decisions.filter((decision) => decision.decision.action === 'HOLD').length
+    const exactTierHits = decisions.filter((decision) => decision.breakdown.exactTierHit).length
     const avgScore =
       decisions.reduce((sum, decision) => sum + decision.compositeScore, 0) / decisions.length
 
     const lines = [
-      `Summary: ${decisions.length} decisions, ${wins} wins, ${losses} losses, ${holds} holds`,
+      `Summary: ${decisions.length} decisions, ${wins} directional wins, ${losses} directional losses, ${holds} holds`,
+      `Exact tier hits: ${exactTierHits}`,
       `Average composite score: ${avgScore.toFixed(3)}`,
       '',
       'Individual decisions:',
@@ -75,7 +77,7 @@ export class LessonExtractor {
     for (const decision of decisions) {
       const dateStr = decision.date.toISOString().slice(0, 10)
       lines.push(
-        `  ${dateStr}: ${decision.decision.action} (conf=${decision.decision.confidence.toFixed(2)}) -> return=${(decision.actualReturn * 100).toFixed(2)}% score=${decision.compositeScore.toFixed(3)} | ${decision.decision.reasoning}`,
+        `  ${dateStr}: ${decision.decision.action} (conf=${decision.decision.confidence.toFixed(2)}) -> realized=${decision.breakdown.realizedTier} exact=${decision.breakdown.exactTierHit} dist=${decision.breakdown.tierDistanceScore.toFixed(3)} dir=${decision.breakdown.directionalScore.toFixed(3)} cal=${decision.breakdown.calibrationScore.toFixed(3)} hold=${decision.breakdown.holdQualityScore.toFixed(3)} risk=${decision.breakdown.riskExecutionScore.toFixed(3)} return=${(decision.actualReturn * 100).toFixed(2)}% score=${decision.compositeScore.toFixed(3)} | ${decision.decision.reasoning}`,
       )
     }
 
@@ -121,6 +123,8 @@ Respond with ONLY a JSON array of lesson objects.`
           passNumber: input.passNumber,
           ticker: input.ticker,
           market: input.market,
+          source: 'extractor',
+          perspective: 'shared',
         }))
     } catch {
       return []

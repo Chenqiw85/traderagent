@@ -5,36 +5,51 @@
 
 import { AdvisorAgent } from '../agents/advisor/AdvisorAgent.js'
 import { AdvisorScheduler } from '../agents/advisor/AdvisorScheduler.js'
+import { BaselineAnalysisService } from '../agents/advisor/BaselineAnalysisService.js'
+import { FreshMarketOverlayBuilder } from '../agents/advisor/FreshMarketOverlayBuilder.js'
+import { MarketTrendAnalyzer } from '../agents/advisor/MarketTrendAnalyzer.js'
+import { NextDayForecastSynthesizer } from '../agents/advisor/NextDayForecastSynthesizer.js'
+import { ReportLoader, type ReportLoaderDeps } from '../agents/advisor/ReportLoader.js'
+import { TechnicalAnalyzer } from '../agents/analyzer/TechnicalAnalyzer.js'
 import { DEFAULT_INDICES } from '../agents/advisor/types.js'
 import { formatAdvisorReport } from '../agents/advisor/ReportFormatter.js'
-import { buildOrchestrator, resolveLLMMap } from '../orchestrator/OrchestratorFactory.js'
+import { FullAnalysisRunner } from '../analysis/FullAnalysisRunner.js'
+import { DEFAULT_PIPELINE_CONFIG, agentConfig } from '../config/config.js'
 import { LLMRegistry } from '../llm/registry.js'
 import { TokenProfiler } from '../llm/TokenProfiler.js'
 import { RetryLLMProvider } from '../llm/withRetry.js'
-import { DEFAULT_PIPELINE_CONFIG, agentConfig } from '../config/config.js'
+import { ConcurrencyLimiter } from '../llm/ConcurrencyLimiter.js'
 import { createWhatsAppSenderFromEnv } from '../messaging/WhatsAppWebSender.js'
+import { buildOrchestrator, resolveLLMMap } from '../orchestrator/OrchestratorFactory.js'
 import { listTickers } from '../sync/watchlist.js'
 import type { Market } from '../agents/base/types.js'
+import type { AdvisorForecastRepository } from '../agents/advisor/AdvisorForecastRepository.js'
 import type { WatchlistEntry, IndexDef } from '../agents/advisor/types.js'
+import type { AnalysisRunRepository } from '../analysis/AnalysisRunRepository.js'
 import { validateTicker, validateMarket } from '../utils/validation.js'
 import { getErrorMessage } from '../utils/errors.js'
 import { createLogger } from '../utils/logger.js'
 import { saveAdvisorReport } from '../reports/AdvisorMarkdownReport.js'
-import { buildDataSourceChain, buildRAGDeps } from './bootstrap.js'
+import { parseAdvisorCliArgs } from './advisorArgs.js'
+import { buildDataSourceChain, buildLiveMarketSourceChain, buildRAGDeps } from './bootstrap.js'
+import { loadCalibratedThresholds } from '../config/calibratedThresholdStore.js'
 
 const log = createLogger('cli:advisor')
 
 // --- Parse CLI args ---
-const mode = process.argv[2]
-const isSchedule = mode === 'schedule'
-const isDryRun = process.argv.includes('--dry-run')
+const parsedArgs = parseAdvisorCliArgs(process.argv.slice(2))
+const isSchedule = parsedArgs.isSchedule
+const isDryRun = parsedArgs.isDryRun
 
 const fallbackSource = buildDataSourceChain('advisor-chain')
+const liveMarketSource = buildLiveMarketSourceChain('advisor-live-market-chain')
 const { ragMode, vectorStore, embedder } = buildRAGDeps()
 
 // --- LLM registry ---
 const registry = new LLMRegistry(agentConfig)
-const wrap = (agent: string) => new TokenProfiler(new RetryLLMProvider(registry.get(agent)), agent)
+const maxConcurrent = Number(process.env['LLM_MAX_CONCURRENT'] ?? '2')
+const wrap = (agent: string) =>
+  new TokenProfiler(new RetryLLMProvider(new ConcurrencyLimiter(registry.get(agent), maxConcurrent)), agent)
 const llms = resolveLLMMap(wrap, 'default')
 const orchestrator = buildOrchestrator({
   llms,
@@ -43,7 +58,31 @@ const orchestrator = buildOrchestrator({
   embedder,
   dataSource: fallbackSource,
   spyDataSource: fallbackSource,
+  calibratedThresholdsLoader: loadCalibratedThresholds,
 })
+let analysisRunRepository: AnalysisRunRepository | undefined
+let reportLoaderDb: ReportLoaderDeps | undefined
+let forecastRepository: AdvisorForecastRepository | undefined
+
+if (process.env['DATABASE_URL']) {
+  const [{ AnalysisRunRepository }, { prisma }, { AdvisorForecastRepository }] = await Promise.all([
+    import('../analysis/AnalysisRunRepository.js'),
+    import('../db/client.js'),
+    import('../agents/advisor/AdvisorForecastRepository.js'),
+  ])
+
+  analysisRunRepository = new AnalysisRunRepository()
+  reportLoaderDb = {
+    db: prisma as unknown as ReportLoaderDeps['db'],
+  }
+  forecastRepository = new AdvisorForecastRepository()
+}
+
+const fullAnalysisRunner = new FullAnalysisRunner({
+  orchestrator,
+  analysisRunRepository,
+})
+const reportLoader = new ReportLoader(reportLoaderDb ?? {})
 
 // --- Parse indices from env or use defaults ---
 function parseIndices(): readonly IndexDef[] {
@@ -76,12 +115,27 @@ const whatsappTo = process.env['ADVISOR_WHATSAPP_TO']
 // --- Build AdvisorAgent ---
 const advisor = new AdvisorAgent({
   llm: wrap('advisor'),
-  trendLlm: wrap('marketTrendAnalyzer'),
-  dataSource: fallbackSource,
-  orchestrator,
+  trendAnalyzer: new MarketTrendAnalyzer({
+    llm: wrap('marketTrendAnalyzer'),
+    dataSource: fallbackSource,
+  }),
+  baselineService: new BaselineAnalysisService({
+    reportLoader,
+    fullAnalysisRunner,
+  }),
+  overlayBuilder: new FreshMarketOverlayBuilder({
+    dataSource: fallbackSource,
+    liveMarketDataSource: liveMarketSource,
+    technicalAnalyzer: new TechnicalAnalyzer({ dataSource: fallbackSource }),
+  }),
+  forecastSynthesizer: new NextDayForecastSynthesizer({
+    llm: wrap('advisorForecastAnalyzer'),
+  }),
   messageSender,
   whatsappTo,
   indices: parseIndices(),
+  ragMode,
+  forecastRepository,
 })
 
 // --- Execute ---
@@ -100,9 +154,9 @@ if (isSchedule) {
   // One-shot mode: run immediately
   const getWatchlist = async (): Promise<WatchlistEntry[]> => {
     // If tickers provided via CLI args
-    const tickerArg = process.argv[2]
-    const marketArg = process.argv[3] ?? 'US'
-    if (tickerArg && tickerArg !== 'schedule') {
+    const tickerArg = parsedArgs.tickerArg
+    const marketArg = parsedArgs.marketArg ?? 'US'
+    if (tickerArg) {
       const market = validateMarket(marketArg)
       return tickerArg.split(',').map((t) => ({ ticker: validateTicker(t), market }))
     }

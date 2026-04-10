@@ -42,6 +42,18 @@ export class RiskAnalyst implements IAgent {
 
 You are a quantitative risk analyst. The risk metrics below were computed from actual market data — do NOT recalculate them. Your job is to interpret these metrics and determine the overall risk level.
 ${context}
+
+RISK CLASSIFICATION RULES (use these thresholds):
+- VaR (95%, 1-day):  < 2% = low,  2-4% = medium,  > 4% = high
+- Annualized volatility:  < 25% = low,  25-45% = medium,  > 45% = high
+- Beta:  < 1.0 = low,  1.0-1.5 = medium,  > 1.5 = high
+- Max drawdown:  < 15% = low,  15-30% = medium,  > 30% = high
+
+OVERALL RISK LEVEL:
+- If ANY metric is "high": overall = high
+- If 2+ metrics are "medium" and none "high": overall = medium
+- If most metrics are "low" with at most 1 "medium": overall = low
+
 Respond with ONLY a JSON object:
 {
   "riskLevel": "low" | "medium" | "high"

@@ -1,10 +1,18 @@
 import type { IAgent } from '../agents/base/IAgent.js'
-import type { Finding, Market, TradingReport } from '../agents/base/types.js'
+import type { Finding, LessonRetrievalEvent, Market, TradingReport } from '../agents/base/types.js'
 import type { DebateEngine } from '../agents/researcher/DebateEngine.js'
 import type { ResearchManager } from '../agents/researcher/ResearchManager.js'
+import { DataQualityAssessor } from '../agents/data/DataQualityAssessor.js'
+import { FundamentalsScorer } from '../agents/researcher/FundamentalsScorer.js'
+import { EvidenceValidator } from '../agents/researcher/EvidenceValidator.js'
+import { ConflictDetector } from '../agents/researcher/ConflictDetector.js'
+import { ConflictResolver } from '../agents/researcher/ConflictResolver.js'
+import { ProposalValidator } from '../agents/trader/ProposalValidator.js'
+import type { EvidenceResult } from '../types/quality.js'
 
 type OrchestratorConfig = {
   dataFetcher?: IAgent
+  realtimeQuoteFetcher?: IAgent
   technicalAnalyzer?: IAgent
   researcherTeam: IAgent[]
   tradePlanner?: IAgent
@@ -20,6 +28,18 @@ type OrchestratorConfig = {
   researchManager?: ResearchManager
   /** Optional: Indicator formatter for debate context */
   indicatorFormatter?: (report: TradingReport) => string
+  /** Optional: Data quality assessor — runs after technical indicator computation */
+  dataQualityAssessor?: DataQualityAssessor
+  /** Optional: Fundamentals scorer — runs after technical analysis */
+  fundamentalsScorer?: FundamentalsScorer
+  /** Optional: Evidence validator — validates research findings before trade planning */
+  evidenceValidator?: EvidenceValidator
+  /** Optional: Conflict detector — detects metric contradictions between bull/bear */
+  conflictDetector?: ConflictDetector
+  /** Optional: Conflict resolver — resolves detected contradictions */
+  conflictResolver?: ConflictResolver
+  /** Optional: Proposal validator — validates trade proposal against research thesis */
+  proposalValidator?: ProposalValidator
 }
 
 type RunContext = {
@@ -29,6 +49,7 @@ type RunContext = {
 
 export class Orchestrator {
   private dataFetcher?: IAgent
+  private realtimeQuoteFetcher?: IAgent
   private technicalAnalyzer?: IAgent
   private researcherTeam: IAgent[]
   private tradePlanner?: IAgent
@@ -39,9 +60,16 @@ export class Orchestrator {
   private debateEngine?: DebateEngine
   private researchManager?: ResearchManager
   private indicatorFormatter?: (report: TradingReport) => string
+  private dataQualityAssessor?: DataQualityAssessor
+  private fundamentalsScorer?: FundamentalsScorer
+  private evidenceValidator?: EvidenceValidator
+  private conflictDetector?: ConflictDetector
+  private conflictResolver?: ConflictResolver
+  private proposalValidator?: ProposalValidator
 
   constructor(config: OrchestratorConfig) {
     this.dataFetcher = config.dataFetcher
+    this.realtimeQuoteFetcher = config.realtimeQuoteFetcher
     this.technicalAnalyzer = config.technicalAnalyzer
     this.researcherTeam = config.researcherTeam
     this.tradePlanner = config.tradePlanner
@@ -52,6 +80,12 @@ export class Orchestrator {
     this.debateEngine = config.debateEngine
     this.researchManager = config.researchManager
     this.indicatorFormatter = config.indicatorFormatter
+    this.dataQualityAssessor = config.dataQualityAssessor
+    this.fundamentalsScorer = config.fundamentalsScorer
+    this.evidenceValidator = config.evidenceValidator
+    this.conflictDetector = config.conflictDetector
+    this.conflictResolver = config.conflictResolver
+    this.proposalValidator = config.proposalValidator
   }
 
   async run(ticker: string, market: Market, context: RunContext = {}): Promise<TradingReport> {
@@ -70,13 +104,31 @@ export class Orchestrator {
       await this.publishReportUpdate(context, report)
     }
 
-    // Stage 2: Compute technical indicators
+    // Stage 2: Overlay live market snapshot
+    if (this.realtimeQuoteFetcher) {
+      report = await this.realtimeQuoteFetcher.run(report)
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 3: Compute technical indicators
     if (this.technicalAnalyzer) {
       report = await this.technicalAnalyzer.run(report)
       await this.publishReportUpdate(context, report)
     }
 
-    // Stage 3: Research — parallel or debate mode
+    // Stage 3b: Data quality assessment (after indicators so technicals completeness is accurate)
+    if (this.dataQualityAssessor) {
+      report = await this.dataQualityAssessor.run(report)
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 3c: Fundamentals scoring
+    if (this.fundamentalsScorer) {
+      report = { ...report, fundamentalScores: this.fundamentalsScorer.score(report) }
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 4: Research — parallel or debate mode
     if (this.debateEngine && this.bullResearcher && this.bearResearcher) {
       report = await this.runDebateMode(report)
     } else if (this.researcherTeam.length > 0) {
@@ -84,25 +136,77 @@ export class Orchestrator {
     }
     await this.publishReportUpdate(context, report)
 
-    // Stage 3b: Research manager — synthesizes a thesis when available
-    if (this.researchManager && !(this.debateEngine && this.bullResearcher && this.bearResearcher)) {
+    // Stage 4b: Evidence validation — filters ungrounded research findings
+    if (this.evidenceValidator) {
+      const validations: EvidenceResult[] = []
+      const validFindings: Finding[] = []
+
+      for (const finding of report.researchFindings) {
+        const result = await this.evidenceValidator.validate(finding, report)
+        validations.push(result)
+        if (result.valid) {
+          validFindings.push(finding)
+        }
+      }
+
+      // Fallback: keep all findings only if validation rejects everything.
+      if (validFindings.length === 0) {
+        report = { ...report, evidenceValidations: validations }
+      } else {
+        report = { ...report, researchFindings: validFindings, evidenceValidations: validations }
+      }
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 4c: Conflict detection + resolution
+    if (this.conflictDetector && this.conflictResolver) {
+      const bullFindings = report.researchFindings.filter((f) => f.stance === 'bull')
+      const bearFindings = report.researchFindings.filter((f) => f.stance === 'bear')
+
+      const overlaps = this.conflictDetector.findMetricOverlaps(bullFindings, bearFindings)
+      const conflicts = await this.conflictDetector.checkContradictions(overlaps)
+
+      if (report.computedIndicators) {
+        const resolutions = await this.conflictResolver.resolveAll(
+          conflicts,
+          report.computedIndicators,
+        )
+        report = { ...report, conflicts, conflictResolutions: resolutions }
+      } else {
+        report = { ...report, conflicts }
+      }
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 4d: Research manager — synthesize the thesis after validation/resolution stages.
+    if (this.researchManager) {
       report = await this.researchManager.run(report)
       await this.publishReportUpdate(context, report)
     }
 
-    // Stage 4: Trade planner — converts thesis into an executable proposal
+    // Stage 5: Trade planner — converts thesis into an executable proposal
     if (this.tradePlanner) {
       report = await this.tradePlanner.run(report)
       await this.publishReportUpdate(context, report)
     }
 
-    // Stage 5: Risk team — sequential (or debate if configured via riskTeam)
+    // Stage 5b: Proposal validation — checks alignment between proposal and research thesis
+    if (this.proposalValidator && report.traderProposal && report.researchThesis) {
+      const proposalValidation = this.proposalValidator.validate(
+        report.traderProposal,
+        report.researchThesis,
+      )
+      report = { ...report, proposalValidation }
+      await this.publishReportUpdate(context, report)
+    }
+
+    // Stage 6: Risk team — sequential (or debate if configured via riskTeam)
     for (const agent of this.riskTeam) {
       report = await agent.run(report)
       await this.publishReportUpdate(context, report)
     }
 
-    // Stage 6: Manager — reads full report, outputs final decision
+    // Stage 7: Manager — reads full report, outputs final decision
     report = await this.manager.run(report)
     await this.publishReportUpdate(context, report)
 
@@ -125,6 +229,7 @@ export class Orchestrator {
         ...report.researchFindings,
         ...researcherResults.flatMap((r) => r.researchFindings),
       ],
+      lessonRetrievals: this.mergeLessonRetrievals(report, researcherResults),
     }
   }
 
@@ -144,6 +249,7 @@ export class Orchestrator {
       return {
         ...report,
         researchFindings: [...report.researchFindings, ...allFindings],
+        lessonRetrievals: this.mergeLessonRetrievals(report, researcherResults),
       }
     }
 
@@ -166,13 +272,31 @@ export class Orchestrator {
         debateResult.bullFinal,
         debateResult.bearFinal,
       ],
-    }
-
-    // Step 5: Research Manager synthesis
-    if (this.researchManager) {
-      updatedReport = await this.researchManager.run(updatedReport)
+      lessonRetrievals: this.mergeLessonRetrievals(report, researcherResults),
     }
 
     return updatedReport
+  }
+
+  private mergeLessonRetrievals(
+    report: TradingReport,
+    researcherResults: TradingReport[],
+  ): LessonRetrievalEvent[] {
+    const existing = report.lessonRetrievals ?? []
+    const merged: LessonRetrievalEvent[] = [...existing]
+    const seen = new Set(
+      existing.map((event) => JSON.stringify(event)),
+    )
+
+    for (const result of researcherResults) {
+      for (const event of result.lessonRetrievals ?? []) {
+        const key = JSON.stringify(event)
+        if (seen.has(key)) continue
+        seen.add(key)
+        merged.push(event)
+      }
+    }
+
+    return merged
   }
 }

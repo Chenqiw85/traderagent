@@ -1,5 +1,14 @@
 // src/agents/base/types.ts
 
+import type {
+  DataQualityReport,
+  FundamentalScores,
+  EvidenceResult,
+  Conflict,
+  Resolution,
+  ProposalValidation,
+} from '../../types/quality.js'
+
 export type AgentRole = 'researcher' | 'risk' | 'manager' | 'data' | 'trader' | 'advisor'
 
 export type Market = 'US' | 'CN' | 'HK'
@@ -64,6 +73,32 @@ export type DataResult = {
   fetchedAt: Date
 }
 
+export type LiveMarketSnapshot = {
+  source: string
+  fetchedAt: Date
+  marketState?: string
+  currency?: string
+  regularMarketPrice?: number
+  regularMarketChange?: number
+  regularMarketChangePercent?: number
+  regularMarketTime?: Date
+  postMarketPrice?: number
+  postMarketChange?: number
+  postMarketChangePercent?: number
+  postMarketTime?: Date
+  preMarketPrice?: number
+  preMarketChange?: number
+  preMarketChangePercent?: number
+  preMarketTime?: Date
+  bid?: number
+  ask?: number
+  dayHigh?: number
+  dayLow?: number
+  fiftyTwoWeekHigh?: number
+  fiftyTwoWeekLow?: number
+  volume?: number
+}
+
 export type Finding = {
   agentName: string
   stance: 'bull' | 'bear' | 'neutral'
@@ -104,6 +139,7 @@ export type TraderProposal = {
   entryLogic: string
   whyNow: string
   timeHorizon: ResearchThesis['timeHorizon']
+  referencePrice?: number
   positionSizeFraction?: number
   stopLoss?: number
   takeProfit?: number
@@ -127,6 +163,29 @@ export type AnalysisArtifact = {
 export type ActionTier = 'BUY' | 'OVERWEIGHT' | 'HOLD' | 'UNDERWEIGHT' | 'SELL'
 
 export const ACTION_TIERS: readonly ActionTier[] = ['BUY', 'OVERWEIGHT', 'HOLD', 'UNDERWEIGHT', 'SELL'] as const
+
+export type LessonPerspective = 'bull' | 'bear' | 'manager' | 'shared'
+
+export type LessonSource = 'extractor' | 'reflection'
+
+export type LessonRetrievalEvent = {
+  lessonId: string
+  agent: string
+  perspective: LessonPerspective
+  source: LessonSource
+  ticker: string
+  market: Market
+  asOf: Date
+  query: string
+  rank: number
+}
+
+export type LessonUsageSummary = {
+  retrievedCount: number
+  retrievedByAgent: Record<string, number>
+  retrievalCountByLesson: Record<string, number>
+  topLessonIds: string[]
+}
 
 /** Maps each action to a directional signal: +1 bullish, 0 neutral, -1 bearish */
 export const ACTION_DIRECTION: Record<ActionTier, number> = {
@@ -152,6 +211,7 @@ export type TradingReport = {
   market: Market
   timestamp: Date
   rawData: DataResult[]
+  liveMarketSnapshot?: LiveMarketSnapshot
   computedIndicators?: ComputedIndicators
   researchFindings: Finding[]
   researchThesis?: ResearchThesis
@@ -160,4 +220,11 @@ export type TradingReport = {
   riskVerdict?: RiskVerdict
   finalDecision?: Decision
   analysisArtifacts?: AnalysisArtifact[]
+  lessonRetrievals?: LessonRetrievalEvent[]
+  dataQuality?: DataQualityReport
+  fundamentalScores?: FundamentalScores
+  evidenceValidations?: EvidenceResult[]
+  conflicts?: Conflict[]
+  conflictResolutions?: Resolution[]
+  proposalValidation?: ProposalValidation
 }

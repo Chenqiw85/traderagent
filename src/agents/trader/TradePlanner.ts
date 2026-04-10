@@ -7,6 +7,7 @@ import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
 import { normalizeOhlcv } from '../../utils/normalizeOhlcv.js'
+import { formatLiveMarketContextLines } from '../../utils/liveMarketSnapshot.js'
 import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
 import { createLogger } from '../../utils/logger.js'
 
@@ -23,6 +24,7 @@ type RawTraderProposal = {
   entryLogic?: unknown
   whyNow?: unknown
   timeHorizon?: unknown
+  referencePrice?: unknown
   positionSizeFraction?: unknown
   stopLoss?: unknown
   takeProfit?: unknown
@@ -102,18 +104,59 @@ Use the research thesis as the primary input, but ground any numeric outputs in 
 
 ${groundedContext}
 
+TRADE PLANNING FRAMEWORK:
+
+1. REFERENCE PRICE (required for BUY/SELL/OVERWEIGHT/UNDERWEIGHT):
+   - This is the specific price level at which to enter the trade
+   - For BUY/OVERWEIGHT: use the nearest support level, current price, or a breakout level
+   - For SELL/UNDERWEIGHT: use the nearest resistance level, current price, or a breakdown level
+   - Must be grounded in actual data: latest close, SMA, Bollinger band, or recent swing high/low
+   - For HOLD actions, set to null
+
+2. ENTRY LOGIC:
+   - Define a specific price level or condition for entry (not vague descriptions)
+   - Reference technical levels: Bollinger bands, SMA support/resistance, recent high/low
+   - Example: "Enter long above $385 (SMA50 reclaim)" NOT "enter on strength"
+
+3. STOP LOSS — use ATR-based methodology:
+   - For long trades: entry price minus (1.5 × ATR) to (2 × ATR)
+   - For short trades: entry price plus (1.5 × ATR) to (2 × ATR)
+   - Also consider key technical levels (below support for longs, above resistance for shorts)
+   - If ATR is not available, use recent swing low/high as stop
+
+4. TAKE PROFIT — use risk-reward ratio:
+   - Minimum 2:1 reward-to-risk ratio (if risking $10 on stop, target at least $20 profit)
+   - Align with technical targets: next resistance/support, Bollinger band extremes
+   - For HOLD actions, leave null
+
+5. RISK-REWARD ASSESSMENT:
+   - Calculate: reward = |takeProfit - entry| / |entry - stopLoss|
+   - If risk-reward < 1.5:1, downgrade confidence or suggest HOLD instead
+   - Include this ratio in your summary
+
+6. POSITION SIZING:
+   - Base: 2-5% of portfolio for swing trades, 1-2% for short-term
+   - Scale by confidence: high confidence = upper range, low = lower range
+   - Scale down for high-beta or high-volatility stocks
+
+RULES:
+- ALL price levels must come from the market context above — do NOT invent numbers
+- If the thesis says HOLD/neutral, reflect that honestly — don't force a directional trade
+- invalidationConditions must be specific and measurable (price levels, indicator values)
+
 Respond with ONLY a JSON object matching this schema:
 {
   "action": "BUY" | "OVERWEIGHT" | "HOLD" | "UNDERWEIGHT" | "SELL",
   "confidence": <number 0-1>,
-  "summary": "<concise one-paragraph proposal summary>",
-  "entryLogic": "<how to enter the trade or avoid entry>",
+  "summary": "<proposal summary including risk-reward ratio>",
+  "entryLogic": "<specific entry condition with price level>",
   "whyNow": "<why this setup matters now>",
   "timeHorizon": "short" | "swing" | "position",
+  "referencePrice": <number — the specific entry price level, or null for HOLD>,
   "positionSizeFraction": <number or null>,
   "stopLoss": <number or null>,
   "takeProfit": <number or null>,
-  "invalidationConditions": ["<condition 1>", "<condition 2>"]
+  "invalidationConditions": ["<measurable condition 1>", "<measurable condition 2>"]
 }`)
 
     let proposal: TraderProposal
@@ -140,6 +183,7 @@ Respond with ONLY a JSON object matching this schema:
         entryLogic: normalizeString(raw.entryLogic),
         whyNow: normalizeString(raw.whyNow),
         timeHorizon: normalizeTimeHorizon(raw.timeHorizon, report.researchThesis.timeHorizon),
+        referencePrice: normalizePositiveNumber(raw.referencePrice),
         positionSizeFraction: normalizeFraction(raw.positionSizeFraction),
         stopLoss: normalizePositiveNumber(raw.stopLoss),
         takeProfit: normalizePositiveNumber(raw.takeProfit),
@@ -183,6 +227,8 @@ Respond with ONLY a JSON object matching this schema:
     if (latestBarLine) {
       lines.push(latestBarLine)
     }
+
+    lines.push(...formatLiveMarketContextLines(report))
 
     const findingsLine = this.formatResearchFindings(report)
     if (findingsLine) {

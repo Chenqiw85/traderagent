@@ -1,7 +1,15 @@
 import type { IAgent } from '../base/IAgent.js'
-import type { AgentRole, DataType, Finding, TradingReport } from '../base/types.js'
+import type {
+  AgentRole,
+  DataType,
+  Finding,
+  LessonPerspective,
+  LessonRetrievalEvent,
+  LessonSource,
+  TradingReport,
+} from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
-import { supportsTextSearch, type IVectorStore } from '../../rag/IVectorStore.js'
+import { supportsTextSearch, type Document, type IVectorStore } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { buildSetupQuery } from '../../analysis/buildSetupQuery.js'
 import { parseJson } from '../../utils/parseJson.js'
@@ -13,9 +21,17 @@ export type ResearcherConfig = {
   llm: ILLMProvider
   vectorStore?: IVectorStore
   embedder?: IEmbedder
-  /** Separate store for lesson retrieval (per-agent memory isolation) */
-  lessonStore?: IVectorStore
   topK?: number
+}
+
+function normalizeLessonPerspective(value: unknown): LessonPerspective {
+  return value === 'bull' || value === 'bear' || value === 'manager' || value === 'shared'
+    ? value
+    : 'shared'
+}
+
+function normalizeLessonSource(value: unknown): LessonSource {
+  return value === 'reflection' || value === 'extractor' ? value : 'extractor'
 }
 
 export abstract class BaseResearcher implements IAgent {
@@ -26,14 +42,12 @@ export abstract class BaseResearcher implements IAgent {
   protected llm: ILLMProvider
   protected vectorStore?: IVectorStore
   protected embedder?: IEmbedder
-  protected lessonStore?: IVectorStore
   protected topK: number
 
   constructor(config: ResearcherConfig) {
     this.llm = config.llm
     this.vectorStore = config.vectorStore
     this.embedder = config.embedder
-    this.lessonStore = config.lessonStore
     this.topK = config.topK ?? 5
     if (config.vectorStore && !config.embedder && !supportsTextSearch(config.vectorStore)) {
       throw new Error(
@@ -55,7 +69,7 @@ export abstract class BaseResearcher implements IAgent {
       )
     }
 
-    const context = await this.retrieveContext(report)
+    const { context, retrievals } = await this.retrieveContext(report)
     const indicators = this.formatIndicators(report)
     const rawDataContext = this.formatRawData(report)
     const systemPrompt = withLanguage(`${tickerPreservationInstruction(report.ticker)}\n\n${this.buildSystemPrompt(report, context, rawDataContext, indicators)}`)
@@ -67,6 +81,7 @@ export abstract class BaseResearcher implements IAgent {
     return {
       ...report,
       researchFindings: [...report.researchFindings, finding],
+      lessonRetrievals: [...(report.lessonRetrievals ?? []), ...retrievals],
     }
   }
 
@@ -131,29 +146,33 @@ export abstract class BaseResearcher implements IAgent {
     return normalizeOhlcv(data) as unknown as Record<string, unknown>[]
   }
 
-  protected async retrieveContext(report: TradingReport): Promise<string> {
+  protected async retrieveContext(
+    report: TradingReport,
+  ): Promise<{ context: string; retrievals: LessonRetrievalEvent[] }> {
     const query = [this.buildQuery(report), buildSetupQuery(report)]
       .filter((part) => part.trim().length > 0)
       .join(' | ')
-    if (!this.vectorStore) return ''
-    const rawMarketDocs = await this.searchDocs(this.vectorStore, query, this.topK + 5, {
-      must: [{ ticker: report.ticker }, { market: report.market }],
-    })
-    const marketDocs = rawMarketDocs
-      .filter((doc) => doc.metadata?.['type'] !== 'lesson')
-      .slice(0, this.topK)
-    // Use the per-agent lesson store if available, otherwise fall back to shared store
-    const lessonStoreToUse = this.lessonStore ?? this.vectorStore
-    const lessonDocs = await this.searchDocs(lessonStoreToUse, query, 3, {
+    if (!this.vectorStore) return { context: '', retrievals: [] }
+    const marketDocs = await this.searchMarketDocs(report, query)
+    const lessonDocs = await this.searchDocs(this.vectorStore, query, 3, {
       must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
     })
 
     const marketContext = marketDocs.map((doc) => doc.content).join('\n\n')
     const lessonContext = lessonDocs.map((doc) => doc.content).join('\n\n')
+    const retrievals = this.buildLessonRetrievals(lessonDocs, report, query)
 
-    if (!lessonContext) return marketContext
-    if (!marketContext) return `=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
-    return `${marketContext}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
+    if (!lessonContext) return { context: marketContext, retrievals }
+    if (!marketContext) {
+      return {
+        context: `=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`,
+        retrievals,
+      }
+    }
+    return {
+      context: `${marketContext}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`,
+      retrievals,
+    }
   }
 
   private async searchDocs(store: IVectorStore, query: string, topK: number, filter?: { must?: Record<string, unknown>[] }) {
@@ -163,6 +182,46 @@ export abstract class BaseResearcher implements IAgent {
     if (!this.embedder) return []
     const embedding = await this.embedder.embed(query)
     return store.search(embedding, topK, filter)
+  }
+
+  private async searchMarketDocs(report: TradingReport, query: string): Promise<Document[]> {
+    if (!this.vectorStore) return []
+
+    const filter = { must: [{ ticker: report.ticker }, { market: report.market }] }
+    const step = Math.max(this.topK + 5, 5)
+    let limit = step
+    let lastRawCount = -1
+
+    while (true) {
+      const rawDocs = await this.searchDocs(this.vectorStore, query, limit, filter)
+      const marketDocs = rawDocs.filter((doc) => doc.metadata?.['type'] !== 'lesson')
+      if (marketDocs.length >= this.topK) {
+        return marketDocs.slice(0, this.topK)
+      }
+      if (rawDocs.length === lastRawCount || rawDocs.length < limit) {
+        return marketDocs.slice(0, this.topK)
+      }
+      lastRawCount = rawDocs.length
+      limit += step
+    }
+  }
+
+  private buildLessonRetrievals(
+    lessonDocs: Document[],
+    report: TradingReport,
+    query: string,
+  ): LessonRetrievalEvent[] {
+    return lessonDocs.map((doc, index) => ({
+      lessonId: doc.id,
+      agent: this.name,
+      perspective: normalizeLessonPerspective(doc.metadata?.['perspective']),
+      source: normalizeLessonSource(doc.metadata?.['source']),
+      ticker: report.ticker,
+      market: report.market,
+      asOf: report.timestamp,
+      query,
+      rank: index + 1,
+    }))
   }
 
   protected parseFinding(response: string): Finding {

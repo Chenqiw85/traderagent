@@ -17,7 +17,11 @@ export type OhlcvBar = {
 
 function barFromRecord(bar: Record<string, unknown>): OhlcvBar {
   return {
-    date: bar.date != null ? String(bar.date) : undefined,
+    date: bar.date != null
+      ? String(bar.date)
+      : bar.timestamp != null
+        ? String(bar.timestamp)
+        : undefined,
     open: Number(bar.open ?? bar.Open ?? 0),
     high: Number(bar.high ?? bar.High ?? 0),
     low: Number(bar.low ?? bar.Low ?? 0),

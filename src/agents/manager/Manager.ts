@@ -1,21 +1,34 @@
 // src/agents/manager/Manager.ts
 import type { IAgent } from '../base/IAgent.js'
-import type { ActionTier, AgentRole, Decision, TradingReport } from '../base/types.js'
+import type {
+  ActionTier,
+  AgentRole,
+  Decision,
+  LessonPerspective,
+  LessonRetrievalEvent,
+  LessonSource,
+  TradingReport,
+} from '../base/types.js'
 import { ACTION_TIERS } from '../base/types.js'
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
-import { supportsTextSearch, type IVectorStore } from '../../rag/IVectorStore.js'
+import { supportsTextSearch, type Document, type IVectorStore } from '../../rag/IVectorStore.js'
 import type { IEmbedder } from '../../rag/IEmbedder.js'
 import { buildSetupQuery } from '../../analysis/buildSetupQuery.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { withLanguage } from '../../utils/i18n.js'
 import { tickerPreservationInstruction } from '../../prompts/tickerPreservation.js'
+import { formatLiveMarketContextLines } from '../../utils/liveMarketSnapshot.js'
+import type { CalibratedThresholds } from '../../types/quality.js'
 
 type ManagerConfig = {
   llm: ILLMProvider
   vectorStore?: IVectorStore
   embedder?: IEmbedder
-  /** Separate store for lesson retrieval (per-agent memory isolation) */
-  lessonStore?: IVectorStore
+  calibratedThresholds?: CalibratedThresholds
+  calibratedThresholdsLoader?: (
+    ticker: string,
+    market: TradingReport['market'],
+  ) => CalibratedThresholds | undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,6 +53,16 @@ function normalizePositiveNumber(value: unknown): number | undefined {
     : undefined
 }
 
+function normalizeLessonPerspective(value: unknown): LessonPerspective {
+  return value === 'bull' || value === 'bear' || value === 'manager' || value === 'shared'
+    ? value
+    : 'shared'
+}
+
+function normalizeLessonSource(value: unknown): LessonSource {
+  return value === 'reflection' || value === 'extractor' ? value : 'extractor'
+}
+
 export class Manager implements IAgent {
   readonly name = 'manager'
   readonly role: AgentRole = 'manager'
@@ -47,13 +70,13 @@ export class Manager implements IAgent {
   private llm: ILLMProvider
   private vectorStore?: IVectorStore
   private embedder?: IEmbedder
-  private lessonStore?: IVectorStore
+  private config: ManagerConfig
 
   constructor(config: ManagerConfig) {
     this.llm = config.llm
     this.vectorStore = config.vectorStore
     this.embedder = config.embedder
-    this.lessonStore = config.lessonStore
+    this.config = config
   }
 
   async run(report: TradingReport): Promise<TradingReport> {
@@ -62,10 +85,15 @@ export class Manager implements IAgent {
     }
 
     const context = this.buildContext(report)
-    const lessonContext = await this.retrieveLessons(report)
+    const { lessonContext, retrievals } = await this.retrieveLessons(report)
     const fullContext = lessonContext
       ? `${context}\n\n=== LESSONS FROM PAST ANALYSIS ===\n${lessonContext}`
       : context
+    const thresholds = this.config.calibratedThresholds
+      ?? this.config.calibratedThresholdsLoader?.(report.ticker, report.market)
+    const t = thresholds?.thresholds ?? {
+      strongBuy: 6, buy: 3, hold: [-2, 2] as const, sell: -5, strongSell: -6,
+    }
     const response = await this.llm.chat([
       {
         role: 'system',
@@ -73,7 +101,43 @@ export class Manager implements IAgent {
 
 You are a senior portfolio manager making a final trading decision for ${report.ticker}.
 ${fullContext}
-Weigh the bull and bear evidence against the risk assessment. Make a final recommendation using the 5-tier scale:
+
+DECISION FRAMEWORK — follow this structured process:
+
+STEP 1: SIGNAL ALIGNMENT CHECK
+Score each dimension (strong bearish = -2, bearish = -1, neutral = 0, bullish = +1, strong bullish = +2):
+- Research thesis stance and confidence
+- Technical trend (price vs SMAs, MACD direction)
+- Fundamental valuation (P/E, P/B reasonableness)
+- Risk assessment level (low/medium/high)
+- Trader proposal direction
+
+STEP 2: ACTION MAPPING (based on net signal score)
+- Net score >= ${t.strongBuy}: BUY (strong multi-signal alignment)
+- Net score ${t.buy} to ${t.strongBuy - 1}: OVERWEIGHT (mostly bullish)
+- Net score ${t.hold[0]} to ${t.hold[1]}: HOLD (mixed or insufficient conviction)
+- Net score ${t.sell} to ${t.hold[0] - 1}: UNDERWEIGHT (mostly bearish)
+- Net score <= ${t.strongSell}: SELL (strong multi-signal alignment)
+
+STEP 3: RISK GATE
+- If risk verdict is NOT approved, you MUST choose HOLD — the risk gate will override any other action to HOLD
+- If risk level is HIGH, reduce confidence by 0.15 and position size by half
+- If research confidence is below 0.4, default to HOLD regardless of direction
+
+STEP 4: POSITION SIZING RATIONALE
+- Base size: 5% for strong conviction, 3% for moderate, 1% for low
+- Adjust down for: high volatility, high beta, low confidence, risk concerns
+- Adjust up for: low volatility, strong multi-signal alignment, high data quality
+- EXPLAIN why you chose the specific position size
+
+STEP 5: CONFIDENCE CALIBRATION
+Your confidence should reflect:
+- How many independent signals agree (more alignment = higher)
+- Quality of underlying data (N/A values = lower)
+- Whether risk verdict supports the action (rejection = lower)
+- 0.8+ requires: aligned thesis + aligned technicals + acceptable risk + approved by risk team
+
+5-tier action scale:
 - BUY: Strong conviction to enter/add a long position
 - OVERWEIGHT: Moderately bullish, increase existing position
 - HOLD: Neutral, maintain current position
@@ -84,7 +148,7 @@ Respond with ONLY a JSON object matching this schema:
 {
   "action": "BUY" | "OVERWEIGHT" | "HOLD" | "UNDERWEIGHT" | "SELL",
   "confidence": <number 0-1>,
-  "reasoning": "<clear explanation of the decision>",
+  "reasoning": "<explain: signal scores, which evidence was decisive, why this position size, what would change your mind>",
   "suggestedPositionSize": <number, fraction of portfolio>,
   "stopLoss": <number or null>,
   "takeProfit": <number or null>
@@ -98,6 +162,7 @@ Respond with ONLY a JSON object matching this schema:
     return {
       ...report,
       finalDecision: decision,
+      lessonRetrievals: [...(report.lessonRetrievals ?? []), ...retrievals],
       analysisArtifacts: [
         ...(report.analysisArtifacts ?? []),
         {
@@ -110,25 +175,33 @@ Respond with ONLY a JSON object matching this schema:
     }
   }
 
-  private async retrieveLessons(report: TradingReport): Promise<string> {
+  private async retrieveLessons(
+    report: TradingReport,
+  ): Promise<{ lessonContext: string; retrievals: LessonRetrievalEvent[] }> {
     const query = buildSetupQuery(report)
-    const store = this.lessonStore ?? this.vectorStore
-    if (!store) return ''
-    const docs = supportsTextSearch(store)
-      ? await store.searchText(query, 3, {
+    if (!this.vectorStore) return { lessonContext: '', retrievals: [] }
+    const docs = supportsTextSearch(this.vectorStore)
+      ? await this.vectorStore.searchText(query, 3, {
           must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
         })
       : this.embedder
-        ? await store.search(await this.embedder.embed(query), 3, {
+        ? await this.vectorStore.search(await this.embedder.embed(query), 3, {
             must: [{ ticker: report.ticker }, { market: report.market }, { type: 'lesson' }],
           })
         : []
 
-    return docs.map((doc) => doc.content).join('\n\n')
+    return {
+      lessonContext: docs.map((doc) => doc.content).join('\n\n'),
+      retrievals: this.buildLessonRetrievals(docs, report, query),
+    }
   }
 
   private buildContext(report: TradingReport): string {
     const lines: string[] = []
+    const liveMarketLines = formatLiveMarketContextLines(report)
+    if (liveMarketLines.length > 0) {
+      lines.push(...liveMarketLines, '')
+    }
     if (report.researchThesis) {
       lines.push('=== Research Thesis ===')
       lines.push(`Stance: ${report.researchThesis.stance} (confidence: ${report.researchThesis.confidence})`)
@@ -152,6 +225,9 @@ Respond with ONLY a JSON object matching this schema:
       lines.push(`Entry logic: ${report.traderProposal.entryLogic}`)
       lines.push(`Why now: ${report.traderProposal.whyNow}`)
       lines.push(`Time horizon: ${report.traderProposal.timeHorizon}`)
+      if (report.traderProposal.referencePrice !== undefined) {
+        lines.push(`Reference price: $${report.traderProposal.referencePrice}`)
+      }
       if (report.traderProposal.positionSizeFraction !== undefined) {
         lines.push(`Position size fraction: ${report.traderProposal.positionSizeFraction}`)
       }
@@ -194,6 +270,12 @@ Respond with ONLY a JSON object matching this schema:
       if (ra.maxPositionSize !== undefined) lines.push(`Max position: ${ra.maxPositionSize}`)
       if (ra.stopLoss !== undefined) lines.push(`Stop loss: ${ra.stopLoss}`)
       if (ra.takeProfit !== undefined) lines.push(`Take profit: ${ra.takeProfit}`)
+    }
+    if (report.dataQuality) {
+      lines.push('')
+      lines.push('=== DATA QUALITY ADVISORY ===')
+      lines.push(report.dataQuality.advisory)
+      lines.push(`Overall data completeness: ${(report.dataQuality.overall * 100).toFixed(0)}%`)
     }
     return lines.filter((line, index, all) => !(line === '' && all[index - 1] === '')).join('\n')
   }
@@ -247,5 +329,23 @@ Respond with ONLY a JSON object matching this schema:
       takeProfit: undefined,
       reasoning: `${report.riskVerdict.summary} The risk gate rejected the proposal, so the non-HOLD action was overridden to HOLD.${blockers}${adjustments}`,
     }
+  }
+
+  private buildLessonRetrievals(
+    docs: Document[],
+    report: TradingReport,
+    query: string,
+  ): LessonRetrievalEvent[] {
+    return docs.map((doc, index) => ({
+      lessonId: doc.id,
+      agent: this.name,
+      perspective: normalizeLessonPerspective(doc.metadata?.['perspective']),
+      source: normalizeLessonSource(doc.metadata?.['source']),
+      ticker: report.ticker,
+      market: report.market,
+      asOf: report.timestamp,
+      query,
+      rank: index + 1,
+    }))
   }
 }

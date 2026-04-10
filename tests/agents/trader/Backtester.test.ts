@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Backtester } from '../../../src/agents/trader/Backtester.js'
 import type { Orchestrator } from '../../../src/orchestrator/Orchestrator.js'
-import type { TradingReport, Decision, Market } from '../../../src/agents/base/types.js'
+import type { TradingReport, Decision, LessonRetrievalEvent, Market } from '../../../src/agents/base/types.js'
 import { CompositeScorer } from '../../../src/agents/trader/CompositeScorer.js'
 
 function makeReport(
   ticker: string,
   market: Market,
   decision: Partial<Decision> = {},
+  lessonRetrievals?: LessonRetrievalEvent[],
 ): TradingReport {
   return {
     ticker,
@@ -23,6 +24,7 @@ function makeReport(
       takeProfit: 110,
       ...decision,
     },
+    lessonRetrievals,
   }
 }
 
@@ -183,5 +185,82 @@ describe('Backtester', () => {
     expect(results).toHaveLength(1)
     expect(results[0]?.hitTakeProfit).toBe(false)
     expect(results[0]?.hitStopLoss).toBe(false)
+  })
+
+  it('attaches lesson usage summaries from replay retrieval events', async () => {
+    const orchestrator = mockOrchestrator(
+      makeReport(
+        'AAPL',
+        'US',
+        { action: 'BUY', confidence: 0.8 },
+        [
+          {
+            lessonId: 'lesson-a',
+            agent: 'bull',
+            perspective: 'bull',
+            source: 'extractor',
+            ticker: 'AAPL',
+            market: 'US',
+            asOf: new Date('2025-06-01T00:00:00.000Z'),
+            query: 'bull setup',
+            rank: 1,
+          },
+          {
+            lessonId: 'lesson-a',
+            agent: 'manager',
+            perspective: 'manager',
+            source: 'reflection',
+            ticker: 'AAPL',
+            market: 'US',
+            asOf: new Date('2025-06-01T00:00:00.000Z'),
+            query: 'trade plan',
+            rank: 2,
+          },
+          {
+            lessonId: 'lesson-b',
+            agent: 'bull',
+            perspective: 'bull',
+            source: 'extractor',
+            ticker: 'AAPL',
+            market: 'US',
+            asOf: new Date('2025-06-01T00:00:00.000Z'),
+            query: 'bull setup',
+            rank: 3,
+          },
+        ],
+      ),
+    )
+    const scorer = new CompositeScorer({ evaluationDays: 2 })
+
+    const ohlcvBars = [
+      { date: '2025-06-01', open: 100, high: 106, low: 99, close: 100, volume: 1000000 },
+      { date: '2025-06-02', open: 101, high: 107, low: 100, close: 106, volume: 1000000 },
+      { date: '2025-06-03', open: 106, high: 108, low: 102, close: 107, volume: 1000000 },
+    ]
+
+    const backtester = new Backtester({
+      orchestratorFactory: () => orchestrator,
+      scorer,
+      ticker: 'AAPL',
+      market: 'US',
+      ohlcvBars,
+      evaluationDays: 2,
+    })
+
+    const results = await backtester.replay(new Date('2025-06-01'), new Date('2025-06-01'))
+
+    expect(results).toHaveLength(1)
+    expect(results[0]?.lessonUsage).toEqual({
+      retrievedCount: 3,
+      retrievedByAgent: {
+        bull: 2,
+        manager: 1,
+      },
+      retrievalCountByLesson: {
+        'lesson-a': 2,
+        'lesson-b': 1,
+      },
+      topLessonIds: ['lesson-a', 'lesson-b'],
+    })
   })
 })

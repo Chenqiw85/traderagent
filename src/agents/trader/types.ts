@@ -1,6 +1,14 @@
 // src/agents/trader/types.ts
 
-import type { Decision, Market } from '../base/types.js'
+import type {
+  ActionTier,
+  Decision,
+  LessonPerspective,
+  LessonSource,
+  LessonUsageSummary,
+  Market,
+} from '../base/types.js'
+import type { CalibratedThresholds } from '../../types/quality.js'
 
 export type OhlcvBar = {
   date: string
@@ -12,17 +20,21 @@ export type OhlcvBar = {
 }
 
 export type ScoreBreakdown = {
-  directional: number    // 0 or 1
-  targetHit: number      // 0, 0.5, or 1
-  calibration: number    // 0-1
-  holdPenalty: number    // 0-1
+  realizedTier: ActionTier
+  exactTierHit: boolean
+  tierDistanceScore: number
+  directionalScore: number
+  calibrationScore: number
+  holdQualityScore: number
+  riskExecutionScore: number
 }
 
 export const SCORE_WEIGHTS = {
-  directional: 0.3,
-  targetHit: 0.3,
-  calibration: 0.25,
-  holdPenalty: 0.15,
+  tierDistance: 0.3,
+  directional: 0.2,
+  calibration: 0.2,
+  holdQuality: 0.1,
+  riskExecution: 0.2,
 } as const
 
 export type ScoredDecision = {
@@ -33,6 +45,7 @@ export type ScoredDecision = {
   hitStopLoss: boolean
   breakdown: ScoreBreakdown
   compositeScore: number
+  lessonUsage?: LessonUsageSummary
 }
 
 export type LessonEntry = {
@@ -44,6 +57,8 @@ export type LessonEntry = {
   passNumber: number
   ticker: string
   market: string
+  source: LessonSource
+  perspective: LessonPerspective
 }
 
 export type TrainConfig = {
@@ -72,6 +87,40 @@ export type PassResult = {
   lessonCount: number
 }
 
+export type TrainResult = {
+  passes: PassResult[]
+  calibratedThresholds?: CalibratedThresholds
+}
+
+export type CalibrationBucket = {
+  label: string
+  minConfidence: number
+  maxConfidence: number
+  decisionCount: number
+  exactTierHitRate: number
+  directionalHitRate: number
+  avgCompositeScore: number
+}
+
+export type LessonEffectiveness = {
+  lessonId: string
+  retrievalCount: number
+  avgCompositeScore: number
+}
+
+export type CredibilitySummary = {
+  exactTierHitRate: number
+  directionalHitRate: number
+  avgCompositeScore: number
+  highConfidenceMissCount: number
+  scoreWithLessons: number | null
+  scoreWithoutLessons: number | null
+  retrievalRateByAgent: Record<string, number>
+  calibrationBuckets: CalibrationBucket[]
+  helpfulLessons: LessonEffectiveness[]
+  harmfulLessons: LessonEffectiveness[]
+}
+
 export type WindowResult = {
   label: string
   windowType: 'train' | 'test'
@@ -79,4 +128,5 @@ export type WindowResult = {
   winRate: number
   compositeScore: number
   decisions: ScoredDecision[]
+  credibility: CredibilitySummary
 }

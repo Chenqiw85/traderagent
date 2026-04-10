@@ -223,13 +223,13 @@ TraderAgent Project Guide
 
   Markdown Reports
 
-  Every CLI command automatically saves a markdown report to the reports/ directory:
+  CLI commands automatically save markdown reports to the reports/ directory:
 
   | Command           | Report File                              | Contents                                  |
   |-------------------|------------------------------------------|-------------------------------------------|
-  | run:analyze       | reports/AAPL_US_2026-04-05_1030.md       | Decision, thesis, trader proposal, risk verdict, indicators |
+  | run:analyze       | reports/AAPL_US.md                       | Decision, thesis, trader proposal, risk verdict, indicators |
   | trader:train      | reports/training_AAPL_US_2026-04-05.md   | Pass scores, win rates, lesson counts     |
-  | advisor           | reports/advisor_2026-04-05_1030.md        | Market overview, recommendations, summary |
+  | advisor           | reports/advisor_2026-04-05_1030.md       | Market overview, recommendations, summary |
 
   Reports are git-ignored. The reports/ directory is created automatically on first run.
 

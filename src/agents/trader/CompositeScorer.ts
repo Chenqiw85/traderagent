@@ -1,6 +1,6 @@
 // src/agents/trader/CompositeScorer.ts
 
-import { ACTION_DIRECTION, type Decision } from '../base/types.js'
+import { ACTION_DIRECTION, type ActionTier, type Decision } from '../base/types.js'
 import { SCORE_WEIGHTS, type ScoreBreakdown } from './types.js'
 
 type ScorerConfig = {
@@ -10,12 +10,20 @@ type ScorerConfig = {
 
 type PriceOutcome = {
   actualReturn: number
-  closePrices: number[]
+  closePrices: readonly number[]
 }
 
 type ScoreResult = {
   breakdown: ScoreBreakdown
   compositeScore: number
+}
+
+const TIER_INDEX: Record<ActionTier, number> = {
+  SELL: 0,
+  UNDERWEIGHT: 1,
+  HOLD: 2,
+  OVERWEIGHT: 3,
+  BUY: 4,
 }
 
 export class CompositeScorer {
@@ -28,20 +36,45 @@ export class CompositeScorer {
   }
 
   score(decision: Decision, outcome: PriceOutcome): ScoreResult {
-    const directional = this.scoreDirectional(decision, outcome)
-    const targetHit = this.scoreTargetHit(decision, outcome)
-    const calibration = this.scoreCalibration(decision, outcome)
-    const holdPenalty = this.scoreHoldPenalty(decision, outcome)
+    const realizedTier = this.realizedTier(outcome.actualReturn)
+    const exactTierHit = decision.action === realizedTier
+    const tierDistanceScore = this.scoreTierDistance(decision.action, realizedTier)
+    const directionalScore = this.scoreDirectional(decision, outcome)
+    const calibrationScore = this.scoreCalibration(decision, outcome)
+    const holdQualityScore = this.scoreHoldQuality(decision, outcome)
+    const riskExecutionScore = this.scoreRiskExecution(decision, outcome)
 
-    const breakdown: ScoreBreakdown = { directional, targetHit, calibration, holdPenalty }
+    const breakdown: ScoreBreakdown = {
+      realizedTier,
+      exactTierHit,
+      tierDistanceScore,
+      directionalScore,
+      calibrationScore,
+      holdQualityScore,
+      riskExecutionScore,
+    }
 
     const compositeScore =
-      breakdown.directional * SCORE_WEIGHTS.directional +
-      breakdown.targetHit * SCORE_WEIGHTS.targetHit +
-      breakdown.calibration * SCORE_WEIGHTS.calibration +
-      breakdown.holdPenalty * SCORE_WEIGHTS.holdPenalty
+      breakdown.tierDistanceScore * SCORE_WEIGHTS.tierDistance +
+      breakdown.directionalScore * SCORE_WEIGHTS.directional +
+      breakdown.calibrationScore * SCORE_WEIGHTS.calibration +
+      breakdown.holdQualityScore * SCORE_WEIGHTS.holdQuality +
+      breakdown.riskExecutionScore * SCORE_WEIGHTS.riskExecution
 
     return { breakdown, compositeScore }
+  }
+
+  private realizedTier(actualReturn: number): ActionTier {
+    if (actualReturn >= 0.05) return 'BUY'
+    if (actualReturn >= 0.02) return 'OVERWEIGHT'
+    if (actualReturn <= -0.05) return 'SELL'
+    if (actualReturn <= -0.02) return 'UNDERWEIGHT'
+    return 'HOLD'
+  }
+
+  private scoreTierDistance(expected: ActionTier, actual: ActionTier): number {
+    const distance = Math.abs(TIER_INDEX[expected] - TIER_INDEX[actual])
+    return Math.max(0, 1 - distance * 0.25)
   }
 
   private scoreDirectional(decision: Decision, outcome: PriceOutcome): number {
@@ -54,11 +87,10 @@ export class CompositeScorer {
     return Math.abs(direction) >= 1 ? 0 : 0.25 // Wrong direction but mild conviction = 0.25
   }
 
-  private scoreTargetHit(decision: Decision, outcome: PriceOutcome): number {
+  private scoreRiskExecution(decision: Decision, outcome: PriceOutcome): number {
     if (decision.stopLoss == null && decision.takeProfit == null) return 0.5
-    const entryPrice = outcome.closePrices[0]
-    if (entryPrice == null) return 0.5
     const direction = ACTION_DIRECTION[decision.action]
+    if (direction === 0) return 0.5
     const isBullish = direction > 0
     for (const price of outcome.closePrices) {
       if (decision.takeProfit != null) {
@@ -74,15 +106,20 @@ export class CompositeScorer {
   }
 
   private scoreCalibration(decision: Decision, outcome: PriceOutcome): number {
+    const realizedTier = this.realizedTier(outcome.actualReturn)
     const direction = ACTION_DIRECTION[decision.action]
-    if (direction === 0) return decision.confidence // HOLD
+    if (direction === 0) {
+      const correct = realizedTier === 'HOLD'
+      return correct ? decision.confidence : 1 - decision.confidence
+    }
+
     const correct =
-      (direction > 0 && outcome.actualReturn > 0) ||
-      (direction < 0 && outcome.actualReturn <= 0)
+      (direction > 0 && (realizedTier === 'BUY' || realizedTier === 'OVERWEIGHT')) ||
+      (direction < 0 && (realizedTier === 'UNDERWEIGHT' || realizedTier === 'SELL'))
     return correct ? decision.confidence : 1 - decision.confidence
   }
 
-  private scoreHoldPenalty(decision: Decision, outcome: PriceOutcome): number {
+  private scoreHoldQuality(decision: Decision, outcome: PriceOutcome): number {
     const direction = ACTION_DIRECTION[decision.action]
     if (direction !== 0) return 1 // Non-HOLD actions are not penalized
     const absReturn = Math.abs(outcome.actualReturn)

@@ -172,4 +172,99 @@ describe('BullResearcher', () => {
       { must: [{ ticker: 'AAPL' }, { market: 'US' }, { type: 'lesson' }] },
     )
   })
+
+  it('records lesson retrieval events on the report', async () => {
+    const llm = mockLLM('{"stance":"bull","evidence":["test"],"confidence":0.7}')
+    const vs: IVectorStore = {
+      upsert: vi.fn(),
+      search: vi.fn()
+        .mockResolvedValueOnce([
+          { id: 'market-1', content: 'Market Doc 1', metadata: { ticker: 'AAPL', market: 'US', type: 'news' } },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'lesson-1',
+            content: 'Lesson A',
+            metadata: {
+              ticker: 'AAPL',
+              market: 'US',
+              type: 'lesson',
+              source: 'extractor',
+              perspective: 'shared',
+            },
+          },
+          {
+            id: 'lesson-2',
+            content: 'Lesson B',
+            metadata: {
+              ticker: 'AAPL',
+              market: 'US',
+              type: 'lesson',
+              source: 'reflection',
+              perspective: 'bull',
+            },
+          },
+        ]),
+      delete: vi.fn(),
+    }
+    const embedder = mockEmbedder()
+    const agent = new BullResearcher({ llm, vectorStore: vs, embedder })
+    const report = emptyReport()
+
+    const result = await agent.run(report)
+
+    expect(result.lessonRetrievals).toEqual([
+      expect.objectContaining({
+        lessonId: 'lesson-1',
+        agent: 'bullResearcher',
+        perspective: 'shared',
+        source: 'extractor',
+        ticker: 'AAPL',
+        market: 'US',
+        asOf: report.timestamp,
+        rank: 1,
+      }),
+      expect.objectContaining({
+        lessonId: 'lesson-2',
+        agent: 'bullResearcher',
+        perspective: 'bull',
+        source: 'reflection',
+        ticker: 'AAPL',
+        market: 'US',
+        asOf: report.timestamp,
+        rank: 2,
+      }),
+    ])
+    expect(result.lessonRetrievals?.[0]?.query).toContain('bullish investment signals and buy evidence for AAPL')
+    expect(result.lessonRetrievals?.[0]?.query).toContain('trading decision lessons AAPL US')
+  })
+
+  it('keeps market docs available even when shared lesson docs dominate top ranks', async () => {
+    const llm = mockLLM('{"stance":"bull","evidence":["test"],"confidence":0.7}')
+    const docs = [
+      { id: 'l1', content: 'Lesson 1', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'extractor', perspective: 'shared' } },
+      { id: 'l2', content: 'Lesson 2', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'extractor', perspective: 'shared' } },
+      { id: 'l3', content: 'Lesson 3', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'reflection', perspective: 'shared' } },
+      { id: 'l4', content: 'Lesson 4', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'reflection', perspective: 'shared' } },
+      { id: 'l5', content: 'Lesson 5', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'extractor', perspective: 'shared' } },
+      { id: 'l6', content: 'Lesson 6', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'extractor', perspective: 'shared' } },
+      { id: 'l7', content: 'Lesson 7', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'extractor', perspective: 'shared' } },
+      { id: 'l8', content: 'Lesson 8', metadata: { ticker: 'AAPL', market: 'US', type: 'lesson', source: 'extractor', perspective: 'shared' } },
+      { id: 'm1', content: 'Market Doc 1', metadata: { ticker: 'AAPL', market: 'US', type: 'news' } },
+      { id: 'm2', content: 'Market Doc 2', metadata: { ticker: 'AAPL', market: 'US', type: 'ohlcv' } },
+    ]
+    const vs: IVectorStore = {
+      upsert: vi.fn(),
+      search: vi.fn().mockImplementation(async (_query, topK) => docs.slice(0, topK)),
+      delete: vi.fn(),
+    }
+    const embedder = mockEmbedder()
+    const agent = new BullResearcher({ llm, vectorStore: vs, embedder, topK: 2 })
+
+    await agent.run(emptyReport())
+
+    const systemPrompt = vi.mocked(llm.chat).mock.calls[0]?.[0]?.[0]?.content ?? ''
+    expect(systemPrompt).toContain('Market Doc 1')
+    expect(systemPrompt).toContain('Market Doc 2')
+  })
 })

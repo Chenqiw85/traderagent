@@ -5,8 +5,10 @@ import type { ILLMProvider } from '../llm/ILLMProvider.js'
 import type { IVectorStore } from '../rag/IVectorStore.js'
 import type { IEmbedder } from '../rag/IEmbedder.js'
 import type { IDataSource } from '../data/IDataSource.js'
+import type { ILiveMarketDataSource } from '../data/ILiveMarketDataSource.js'
 import type { AnalystType, PipelineConfig } from '../config/config.js'
 import type { TradingReport } from '../agents/base/types.js'
+import type { CalibratedThresholds } from '../types/quality.js'
 import { Orchestrator } from './Orchestrator.js'
 import { BullResearcher } from '../agents/researcher/BullResearcher.js'
 import { BearResearcher } from '../agents/researcher/BearResearcher.js'
@@ -24,8 +26,14 @@ import { PortfolioManager } from '../agents/risk/PortfolioManager.js'
 import { RiskDebateEngine } from '../agents/risk/RiskDebateEngine.js'
 import { Manager } from '../agents/manager/Manager.js'
 import { DataFetcher } from '../agents/data/DataFetcher.js'
+import { RealtimeQuoteFetcher } from '../agents/data/RealtimeQuoteFetcher.js'
 import { TechnicalAnalyzer } from '../agents/analyzer/TechnicalAnalyzer.js'
-import type { PerAgentMemoryStore } from '../rag/PerAgentMemoryStore.js'
+import { DataQualityAssessor } from '../agents/data/DataQualityAssessor.js'
+import { FundamentalsScorer } from '../agents/researcher/FundamentalsScorer.js'
+import { EvidenceValidator } from '../agents/researcher/EvidenceValidator.js'
+import { ConflictDetector } from '../agents/researcher/ConflictDetector.js'
+import { ConflictResolver } from '../agents/researcher/ConflictResolver.js'
+import { ProposalValidator } from '../agents/trader/ProposalValidator.js'
 import { setOutputLanguage } from '../utils/i18n.js'
 
 type LLMMap = {
@@ -50,8 +58,12 @@ type FactoryDeps = {
   embedder?: IEmbedder
   dataSource?: IDataSource
   spyDataSource?: IDataSource
-  /** Per-agent isolated memory stores for lesson retrieval */
-  perAgentMemory?: PerAgentMemoryStore
+  liveMarketDataSource?: ILiveMarketDataSource
+  calibratedThresholds?: CalibratedThresholds
+  calibratedThresholdsLoader?: (
+    ticker: string,
+    market: TradingReport['market'],
+  ) => CalibratedThresholds | undefined
 }
 
 const ANALYST_BUILDERS: Record<AnalystType, (deps: FactoryDeps) => IAgent> = {
@@ -60,14 +72,12 @@ const ANALYST_BUILDERS: Record<AnalystType, (deps: FactoryDeps) => IAgent> = {
       llm: deps.llms.bull,
       vectorStore: deps.vectorStore,
       embedder: deps.embedder,
-      lessonStore: deps.perAgentMemory?.getStore('bull'),
     }),
   bear: (deps) =>
     new BearResearcher({
       llm: deps.llms.bear,
       vectorStore: deps.vectorStore,
       embedder: deps.embedder,
-      lessonStore: deps.perAgentMemory?.getStore('bear'),
     }),
   news: (deps) =>
     new NewsAnalyst({
@@ -192,6 +202,12 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
       })
     : undefined
 
+  const realtimeQuoteFetcher = deps.liveMarketDataSource
+    ? new RealtimeQuoteFetcher({
+        liveMarketDataSource: deps.liveMarketDataSource,
+      })
+    : undefined
+
   const technicalAnalyzer = deps.dataSource
     ? new TechnicalAnalyzer({ dataSource: deps.spyDataSource ?? deps.dataSource })
     : undefined
@@ -209,8 +225,16 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
     ].join('\n')
   }
 
+  const dataQualityAssessor = new DataQualityAssessor({ llm: llms.manager })
+  const fundamentalsScorer = new FundamentalsScorer()
+  const evidenceValidator = new EvidenceValidator({ llm: llms.manager })
+  const conflictDetector = new ConflictDetector({ llm: llms.manager })
+  const conflictResolver = new ConflictResolver({ llm: llms.manager })
+  const proposalValidator = new ProposalValidator()
+
   return new Orchestrator({
     dataFetcher,
+    realtimeQuoteFetcher,
     technicalAnalyzer,
     researcherTeam,
     tradePlanner,
@@ -219,12 +243,19 @@ export function buildOrchestrator(deps: FactoryDeps): Orchestrator {
       llm: llms.manager,
       vectorStore: deps.vectorStore,
       embedder: deps.embedder,
-      lessonStore: deps.perAgentMemory?.getStore('portfolio_manager'),
+      calibratedThresholds: deps.calibratedThresholds,
+      calibratedThresholdsLoader: deps.calibratedThresholdsLoader,
     }),
     bullResearcher,
     bearResearcher,
     debateEngine,
     researchManager,
     indicatorFormatter,
+    dataQualityAssessor,
+    fundamentalsScorer,
+    evidenceValidator,
+    conflictDetector,
+    conflictResolver,
+    proposalValidator,
   })
 }

@@ -19,6 +19,15 @@ function fullReport(): TradingReport {
     ticker: 'AAPL',
     market: 'US',
     timestamp: new Date(),
+    liveMarketSnapshot: {
+      source: 'mock-feed',
+      fetchedAt: new Date('2026-04-05T15:59:30Z'),
+      marketState: 'postMarket',
+      currency: 'USD',
+      postMarketPrice: 184.25,
+      bid: 184.2,
+      ask: 184.4,
+    },
     rawData: [],
     researchFindings: [
       { agentName: 'bullResearcher', stance: 'bull', evidence: ['Strong earnings'], confidence: 0.8 },
@@ -60,6 +69,11 @@ function fullReport(): TradingReport {
     },
     analysisArtifacts: [],
   }
+}
+
+function fullReportWithoutSnapshot(): TradingReport {
+  const { liveMarketSnapshot, ...report } = fullReport()
+  return report
 }
 
 function mockVectorStore(): IVectorStore {
@@ -154,6 +168,10 @@ describe('Manager', () => {
     const agent = new Manager({ llm })
     await agent.run(fullReport())
     const messages = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(messages[0].content).toContain('Live market snapshot')
+    expect(messages[0].content).toContain('Session: postmarket')
+    expect(messages[0].content).toContain('Effective live price: $184.25')
+    expect(messages[0].content).toContain('Bid/Ask: $184.20 / $184.40')
     expect(messages[0].content).toContain('Research Thesis')
     expect(messages[0].content).toContain('Uptrend and earnings revisions still support upside.')
     expect(messages[0].content).toContain('Trader Proposal')
@@ -162,6 +180,18 @@ describe('Manager', () => {
     expect(messages[0].content).toContain('Risk is acceptable if sizing stays disciplined.')
     expect(messages[0].content).toContain('bullResearcher')
     expect(messages[0].content).toContain('medium')
+  })
+
+  it('does not include the live market snapshot header when no snapshot exists', async () => {
+    const llm = mockLLM('{"action":"SELL","confidence":0.65,"reasoning":"Risk too high"}')
+    const agent = new Manager({ llm })
+    await agent.run(fullReportWithoutSnapshot())
+    const messages = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(messages[0].content).not.toContain('Live market snapshot')
+    expect(messages[0].content).not.toContain('Session: ')
+    expect(messages[0].content).not.toContain('Effective live price:')
+    expect(messages[0].content).not.toContain('Bid/Ask:')
+    expect(messages[0].content).toContain('Research Thesis')
   })
 
   it('coerces bullish LLM output to HOLD when the risk gate rejects the proposal', async () => {
@@ -244,5 +274,126 @@ describe('Manager', () => {
       3,
       { must: [{ ticker: 'AAPL' }, { market: 'US' }, { type: 'lesson' }] },
     )
+  })
+
+  it('records lesson retrieval events on the report', async () => {
+    const llm = mockLLM('{"action":"HOLD","confidence":0.5,"reasoning":"test"}')
+    const vs = mockTextSearchVectorStore()
+    vi.mocked(vs.searchText).mockResolvedValue([
+      {
+        id: 'lesson-1',
+        content: 'Lesson A',
+        metadata: {
+          type: 'lesson',
+          ticker: 'AAPL',
+          market: 'US',
+          source: 'extractor',
+          perspective: 'shared',
+        },
+      },
+      {
+        id: 'lesson-2',
+        content: 'Lesson B',
+        metadata: {
+          type: 'lesson',
+          ticker: 'AAPL',
+          market: 'US',
+          source: 'reflection',
+          perspective: 'manager',
+        },
+      },
+    ])
+    const agent = new Manager({ llm, vectorStore: vs })
+    const report = fullReport()
+
+    const result = await agent.run(report)
+
+    expect(result.lessonRetrievals).toEqual([
+      expect.objectContaining({
+        lessonId: 'lesson-1',
+        agent: 'manager',
+        perspective: 'shared',
+        source: 'extractor',
+        ticker: 'AAPL',
+        market: 'US',
+        asOf: report.timestamp,
+        rank: 1,
+      }),
+      expect.objectContaining({
+        lessonId: 'lesson-2',
+        agent: 'manager',
+        perspective: 'manager',
+        source: 'reflection',
+        ticker: 'AAPL',
+        market: 'US',
+        asOf: report.timestamp,
+        rank: 2,
+      }),
+    ])
+    expect(result.lessonRetrievals?.[0]?.query).toContain('trading decision lessons AAPL US')
+    expect(result.lessonRetrievals?.[0]?.query).toContain('bullish setup')
+  })
+
+  it('uses calibrated thresholds when provided', async () => {
+    const llm = mockLLM('{"action":"BUY","confidence":0.8,"reasoning":"Strong signal alignment"}')
+    const agent = new Manager({
+      llm,
+      calibratedThresholds: {
+        calibratedAt: new Date(),
+        sampleSize: 100,
+        calibrationConfidence: 0.9,
+        thresholds: {
+          strongBuy: 5, buy: 2.5, hold: [-1.5, 2.4], sell: -2.5, strongSell: -5,
+        },
+        dimensionWeights: { research: 0.3, technical: 0.3, fundamental: 0.2, risk: 0.1, proposal: 0.1 },
+      },
+    })
+    const result = await agent.run(fullReport())
+    expect(result.finalDecision).toBeDefined()
+    expect(result.finalDecision?.action).toBe('BUY')
+    // Verify calibrated thresholds appear in the prompt
+    const messages = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(messages[0].content).toContain('Net score >= 5')
+    expect(messages[0].content).toContain('Net score 2.5 to')
+  })
+
+  it('loads calibrated thresholds from the loader for the current ticker', async () => {
+    const llm = mockLLM('{"action":"BUY","confidence":0.8,"reasoning":"Strong signal alignment"}')
+    const calibratedThresholdsLoader = vi.fn().mockReturnValue({
+      calibratedAt: new Date(),
+      sampleSize: 64,
+      calibrationConfidence: 0.84,
+      thresholds: {
+        strongBuy: 4.5, buy: 2.2, hold: [-1.2, 1.8], sell: -3.1, strongSell: -5.2,
+      },
+      dimensionWeights: { research: 0.3, technical: 0.25, fundamental: 0.2, risk: 0.15, proposal: 0.1 },
+    })
+    const agent = new Manager({ llm, calibratedThresholdsLoader })
+
+    await agent.run(fullReport())
+
+    expect(calibratedThresholdsLoader).toHaveBeenCalledWith('AAPL', 'US')
+    const messages = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(messages[0].content).toContain('Net score >= 4.5')
+    expect(messages[0].content).toContain('Net score 2.2 to')
+  })
+
+  it('includes data quality advisory in the prompt when available', async () => {
+    const llm = mockLLM('{"action":"HOLD","confidence":0.5,"reasoning":"test"}')
+    const agent = new Manager({ llm })
+    const report = fullReport()
+    report.dataQuality = {
+      fundamentals: { completeness: 0.8, available: ['pe', 'pb'], missing: ['eps'] },
+      technicals: { completeness: 0.9, available: ['sma50'], missing: ['sma200'] },
+      news: { completeness: 1.0, available: ['articles'], missing: [] },
+      ohlcv: { completeness: 0.5, available: [], missing: ['gdp'] },
+      overall: 0.8,
+      advisory: 'Missing EPS data — valuation scores may be unreliable.',
+    }
+    await agent.run(report)
+    const messages = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(messages[0].content).toContain('DATA QUALITY ADVISORY')
+    expect(messages[0].content).toContain('Missing EPS data')
+    expect(messages[0].content).toContain('80%')
   })
 })

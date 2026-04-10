@@ -42,8 +42,8 @@ describe('PostgresDataSource', () => {
 
     it('returns data when fresh rows exist', async () => {
       const rows = [
-        { ticker: 'AAPL', date: new Date('2026-03-27'), open: 150, high: 155, low: 149, close: 153, volume: BigInt(1000000) },
         { ticker: 'AAPL', date: new Date('2026-03-26'), open: 148, high: 152, low: 147, close: 150, volume: BigInt(900000) },
+        { ticker: 'AAPL', date: new Date('2026-03-27'), open: 150, high: 155, low: 149, close: 153, volume: BigInt(1000000) },
       ]
       mockOhlcvFindMany.mockResolvedValue(rows)
 
@@ -65,6 +65,54 @@ describe('PostgresDataSource', () => {
     it('throws when no rows exist', async () => {
       mockOhlcvFindMany.mockResolvedValue([])
       await expect(source.fetch(query)).rejects.toThrow('No ohlcv data for AAPL in postgres')
+    })
+
+    it('throws when the latest OHLCV row is stale relative to the query end time', async () => {
+      mockOhlcvFindMany.mockResolvedValue([
+        {
+          ticker: 'AAPL',
+          market: 'US',
+          date: new Date('2026-03-20T20:00:00Z'),
+          open: 150,
+          high: 155,
+          low: 149,
+          close: 153,
+          volume: BigInt(1000000),
+        },
+      ])
+
+      await expect(
+        source.fetch({
+          ticker: 'AAPL',
+          market: 'US',
+          type: 'ohlcv',
+          to: new Date('2026-03-27T21:00:00Z'),
+        }),
+      ).rejects.toThrow('Stale ohlcv data for AAPL')
+    })
+
+    it('treats two-day-old OHLCV data as stale for fresh overlay reads', async () => {
+      mockOhlcvFindMany.mockResolvedValue([
+        {
+          ticker: 'AAPL',
+          market: 'US',
+          date: new Date('2026-03-25T22:00:00Z'),
+          open: 150,
+          high: 155,
+          low: 149,
+          close: 153,
+          volume: BigInt(1000000),
+        },
+      ])
+
+      await expect(
+        source.fetch({
+          ticker: 'AAPL',
+          market: 'US',
+          type: 'ohlcv',
+          to: new Date('2026-03-27T21:00:00Z'),
+        }),
+      ).rejects.toThrow('Stale ohlcv data for AAPL')
     })
   })
 
@@ -130,6 +178,46 @@ describe('PostgresDataSource', () => {
     it('throws when no articles exist', async () => {
       mockNewsFindMany.mockResolvedValue([])
       await expect(source.fetch(query)).rejects.toThrow('No news data for AAPL in postgres')
+    })
+
+    it('throws when the latest news article is stale relative to the query end time', async () => {
+      mockNewsFindMany.mockResolvedValue([
+        {
+          title: 'Old article',
+          url: 'https://example.com/1',
+          publishedAt: new Date('2026-03-20T10:00:00Z'),
+          fetchedAt: new Date('2026-03-20T10:05:00Z'),
+        },
+      ])
+
+      await expect(
+        source.fetch({
+          ticker: 'AAPL',
+          market: 'US',
+          type: 'news',
+          to: new Date('2026-03-27T21:00:00Z'),
+        }),
+      ).rejects.toThrow('Stale news data for AAPL')
+    })
+
+    it('treats two-day-old news as stale for fresh overlay reads', async () => {
+      mockNewsFindMany.mockResolvedValue([
+        {
+          title: 'Yesterday-ish article',
+          url: 'https://example.com/1',
+          publishedAt: new Date('2026-03-25T20:30:00Z'),
+          fetchedAt: new Date('2026-03-25T20:35:00Z'),
+        },
+      ])
+
+      await expect(
+        source.fetch({
+          ticker: 'AAPL',
+          market: 'US',
+          type: 'news',
+          to: new Date('2026-03-27T21:00:00Z'),
+        }),
+      ).rejects.toThrow('Stale news data for AAPL')
     })
   })
 

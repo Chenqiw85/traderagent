@@ -166,3 +166,25 @@ model AnalysisStage {
 
   @@index([runId, stage])
 }
+
+model AdvisorForecast {
+  id                 String   @id @default(uuid())
+  ticker             String
+  market             String
+  issuedAt           DateTime
+  targetSession      DateTime
+  predictedDirection String
+  referencePrice     Float
+  targetPrice        Float
+  confidence         Float
+  baselineAction     String
+  baselineAsOf       DateTime
+  changeFromBaseline String
+  actualClose        Float?
+  actualDirection    String?
+  scoredAt           DateTime?
+  createdAt          DateTime @default(now())
+
+  @@index([ticker, market, issuedAt])
+  @@index([targetSession, market])
+}

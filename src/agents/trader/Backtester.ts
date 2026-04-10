@@ -3,6 +3,7 @@ import { ACTION_DIRECTION, type Decision, type Market } from '../base/types.js'
 import type { OhlcvBar, ScoredDecision } from './types.js'
 import type { CompositeScorer } from './CompositeScorer.js'
 import { createLogger } from '../../utils/logger.js'
+import { summarizeLessonUsage } from './CredibilityAnalyzer.js'
 
 const log = createLogger('backtester')
 
@@ -68,7 +69,10 @@ export class Backtester {
       const decision = report.finalDecision
       if (!decision) continue
 
-      const scored = this.buildScoredDecision(barDate, decision, outcome)
+      const lessonUsage = report.lessonRetrievals != null
+        ? summarizeLessonUsage(report.lessonRetrievals)
+        : undefined
+      const scored = this.buildScoredDecision(barDate, decision, outcome, lessonUsage)
       results.push(scored)
     }
 
@@ -87,6 +91,7 @@ export class Backtester {
     date: Date,
     decision: Decision,
     outcome: PriceOutcome,
+    lessonUsage?: ScoredDecision['lessonUsage'],
   ): ScoredDecision {
     const { breakdown, compositeScore } = this.scorer.score(decision, outcome)
     const direction = ACTION_DIRECTION[decision.action]
@@ -113,6 +118,7 @@ export class Backtester {
       hitStopLoss,
       breakdown,
       compositeScore,
+      lessonUsage,
     }
   }
 }

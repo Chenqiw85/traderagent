@@ -16,6 +16,15 @@ function reportWithThesis(): TradingReport {
     ticker: 'AAPL',
     market: 'US',
     timestamp: new Date('2026-04-05T10:00:00Z'),
+    liveMarketSnapshot: {
+      source: 'mock-feed',
+      fetchedAt: new Date('2026-04-05T09:59:30Z'),
+      marketState: 'postMarket',
+      currency: 'USD',
+      postMarketPrice: 184.25,
+      bid: 184.2,
+      ask: 184.4,
+    },
     rawData: [
       {
         ticker: 'AAPL',
@@ -81,6 +90,11 @@ function reportWithThesis(): TradingReport {
     },
     analysisArtifacts: [],
   }
+}
+
+function reportWithThesisWithoutSnapshot(): TradingReport {
+  const { liveMarketSnapshot, ...report } = reportWithThesis()
+  return report
 }
 
 describe('TradePlanner', () => {
@@ -161,7 +175,36 @@ describe('TradePlanner', () => {
     expect(combinedPrompt).toContain('Momentum and earnings revisions support upside.')
     expect(combinedPrompt).toContain('Latest market context')
     expect(combinedPrompt).toContain('RSI=63.4')
-    expect(combinedPrompt).toContain('close=182.00')
+    expect(combinedPrompt).toContain('Live market snapshot')
+    expect(combinedPrompt).toContain('Session: postmarket')
+    expect(combinedPrompt).toContain('Effective live price: $184.25')
+    expect(combinedPrompt).toContain('Latest daily close: $182.00')
+  })
+
+  it('does not include the live market snapshot header when no snapshot exists', async () => {
+    const llm = mockLLM(
+      JSON.stringify({
+        action: 'BUY',
+        confidence: 0.7,
+        summary: 'Grounded trade plan.',
+        entryLogic: 'Buy strength.',
+        whyNow: 'Setup confirmed.',
+        timeHorizon: 'swing',
+        invalidationConditions: ['Break support'],
+      }),
+    )
+    const agent = new TradePlanner({ llm })
+
+    await agent.run(reportWithThesisWithoutSnapshot())
+
+    const messages = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    const combinedPrompt = messages.map((message: { content: string }) => message.content).join('\n')
+
+    expect(combinedPrompt).not.toContain('Live market snapshot')
+    expect(combinedPrompt).not.toContain('Session: ')
+    expect(combinedPrompt).not.toContain('Effective live price:')
+    expect(combinedPrompt).toContain('Latest market context')
+    expect(combinedPrompt).toContain('RSI=63.4')
   })
 
   it('drops out-of-range numeric proposal fields from the LLM payload', async () => {

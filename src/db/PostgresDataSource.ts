@@ -10,6 +10,10 @@ const FRESHNESS_HOURS: Record<DataType, number> = {
   news: 24,
 }
 
+function hoursSince(anchor: Date, observedAt: Date): number {
+  return (anchor.getTime() - observedAt.getTime()) / (1000 * 60 * 60)
+}
+
 export class PostgresDataSource implements IDataSource {
   readonly name = 'postgres'
 
@@ -50,6 +54,12 @@ export class PostgresDataSource implements IDataSource {
 
     if (rows.length === 0) {
       throw new Error(`No ohlcv data for ${ticker} in postgres`)
+    }
+
+    const latestRow = rows[rows.length - 1]
+    const ageHours = hoursSince(period2, latestRow.date)
+    if (ageHours > FRESHNESS_HOURS.ohlcv) {
+      throw new Error(`Stale ohlcv data for ${ticker} (${Math.round(ageHours)}h old)`)
     }
 
     return { ticker, market, type: 'ohlcv', data: rows, fetchedAt: new Date() }
@@ -93,6 +103,12 @@ export class PostgresDataSource implements IDataSource {
 
     if (articles.length === 0) {
       throw new Error(`No news data for ${ticker} in postgres`)
+    }
+
+    const latestArticle = articles[0]
+    const ageHours = hoursSince(period2, latestArticle.publishedAt)
+    if (ageHours > FRESHNESS_HOURS.news) {
+      throw new Error(`Stale news data for ${ticker} (${Math.round(ageHours)}h old)`)
     }
 
     return { ticker, market, type: 'news', data: articles, fetchedAt: new Date() }
