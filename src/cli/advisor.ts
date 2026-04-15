@@ -24,6 +24,7 @@ import { buildOrchestrator, resolveLLMMap } from '../orchestrator/OrchestratorFa
 import { listTickers } from '../sync/watchlist.js'
 import type { Market } from '../agents/base/types.js'
 import type { AdvisorForecastRepository } from '../agents/advisor/AdvisorForecastRepository.js'
+import type { TickerAccuracyProvider } from '../agents/advisor/TickerAccuracyProvider.js'
 import type { WatchlistEntry, IndexDef } from '../agents/advisor/types.js'
 import type { AnalysisRunRepository } from '../analysis/AnalysisRunRepository.js'
 import { validateTicker, validateMarket } from '../utils/validation.js'
@@ -63,12 +64,19 @@ const orchestrator = buildOrchestrator({
 let analysisRunRepository: AnalysisRunRepository | undefined
 let reportLoaderDb: ReportLoaderDeps | undefined
 let forecastRepository: AdvisorForecastRepository | undefined
+let accuracyProvider: TickerAccuracyProvider | undefined
 
 if (process.env['DATABASE_URL']) {
-  const [{ AnalysisRunRepository }, { prisma }, { AdvisorForecastRepository }] = await Promise.all([
+  const [
+    { AnalysisRunRepository },
+    { prisma },
+    { AdvisorForecastRepository },
+    { TickerAccuracyProvider },
+  ] = await Promise.all([
     import('../analysis/AnalysisRunRepository.js'),
     import('../db/client.js'),
     import('../agents/advisor/AdvisorForecastRepository.js'),
+    import('../agents/advisor/TickerAccuracyProvider.js'),
   ])
 
   analysisRunRepository = new AnalysisRunRepository()
@@ -76,6 +84,7 @@ if (process.env['DATABASE_URL']) {
     db: prisma as unknown as ReportLoaderDeps['db'],
   }
   forecastRepository = new AdvisorForecastRepository()
+  accuracyProvider = new TickerAccuracyProvider({ repository: forecastRepository })
 }
 
 const fullAnalysisRunner = new FullAnalysisRunner({
@@ -130,6 +139,7 @@ const advisor = new AdvisorAgent({
   }),
   forecastSynthesizer: new NextDayForecastSynthesizer({
     llm: wrap('advisorForecastAnalyzer'),
+    accuracyProvider,
   }),
   messageSender,
   whatsappTo,

@@ -1,8 +1,13 @@
 import type { ILLMProvider } from '../../llm/ILLMProvider.js'
 import type { ComputedIndicators, Decision, Market, ResearchThesis, RiskAssessment, RiskVerdict } from '../base/types.js'
 import { parseJson } from '../../utils/parseJson.js'
-import type { BaselineStrength, ForecastDirection, MarketTrend, NextDayForecast } from './types.js'
+import type { AbstainForecast, BaselineStrength, ForecastDirection, MarketTrend, NextDayForecast, NextDayForecastSuccess } from './types.js'
 import { computeSignalAlignment, type SignalAlignment } from './SignalAlignmentScorer.js'
+import type { TickerAccuracyProvider, TickerAccuracyStats } from './TickerAccuracyProvider.js'
+import { createLogger } from '../../utils/logger.js'
+import { getErrorMessage } from '../../utils/errors.js'
+
+const log = createLogger('forecast-synthesizer')
 
 type SynthesizeInput = {
   ticker: string
@@ -33,20 +38,17 @@ type RawForecast = {
 
 type NextDayForecastSynthesizerDeps = {
   llm: ILLMProvider
+  accuracyProvider?: Pick<TickerAccuracyProvider, 'getStats'>
 }
 
-const MALFORMED_FORECAST_CONFIDENCE = 0.2
-const MALFORMED_FORECAST_REASONING = 'Forecast synthesizer returned malformed output; defaulting to a neutral next-session forecast.'
+const CLAMP_FLEX = 0.03
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function normalizeDirection(value: unknown): { value: ForecastDirection; valid: boolean } {
-  if (value === 'up' || value === 'down' || value === 'flat') {
-    return { value, valid: true }
-  }
-
+  if (value === 'up' || value === 'down' || value === 'flat') return { value, valid: true }
   return { value: 'flat', valid: false }
 }
 
@@ -55,7 +57,6 @@ function normalizeConfidence(value: unknown): { value: number; valid: boolean } 
     if (value >= 0 && value <= 1) return { value, valid: true }
     if (Number.isInteger(value) && value > 1 && value <= 100) return { value: value / 100, valid: true }
   }
-
   if (typeof value === 'string') {
     const trimmed = value.trim()
     const hasPercentSuffix = trimmed.endsWith('%')
@@ -67,8 +68,7 @@ function normalizeConfidence(value: unknown): { value: number; valid: boolean } 
       if (/^\d+(?:\.0+)?$/.test(numericText) && parsed > 1 && parsed <= 100) return { value: parsed / 100, valid: true }
     }
   }
-
-  return { value: MALFORMED_FORECAST_CONFIDENCE, valid: false }
+  return { value: 0, valid: false }
 }
 
 function normalizeTargetPrice(
@@ -77,21 +77,11 @@ function normalizeTargetPrice(
   direction: ForecastDirection,
   targetRange?: readonly [number, number],
 ): number {
-  if (direction === 'flat') {
-    return fallback
-  }
-
+  if (direction === 'flat') return fallback
   const parsed = typeof value === 'number'
     ? value
-    : typeof value === 'string'
-      ? Number(value.trim())
-      : NaN
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback
-  }
-
-  // Allow the LLM to set a target price within the ATR-based target range
+    : typeof value === 'string' ? Number(value.trim()) : NaN
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
   if (targetRange) {
     const [low, high] = targetRange
     const inDirectionalRange = direction === 'up'
@@ -99,8 +89,6 @@ function normalizeTargetPrice(
       : parsed >= low && parsed <= fallback
     if (inDirectionalRange) return Math.round(parsed * 100) / 100
   }
-
-  // Fallback: accept if within 2% of latest close
   const deviation = Math.abs(parsed - fallback) / fallback
   const directionalMatch = direction === 'up' ? parsed >= fallback : parsed <= fallback
   return deviation <= 0.02 && directionalMatch ? Math.round(parsed * 100) / 100 : fallback
@@ -113,11 +101,10 @@ const BAND_RANGES: Record<SignalAlignment['suggestedBand'], readonly [number, nu
   high: [0.70, 0.85],
 }
 
-/** Allow ±10% drift from the band but never escape it entirely. */
 function clampToAlignmentBand(confidence: number, alignment: SignalAlignment): number {
   const [bandMin, bandMax] = BAND_RANGES[alignment.suggestedBand]
-  const flexMin = Math.max(0.15, bandMin - 0.10)
-  const flexMax = Math.min(0.85, bandMax + 0.10)
+  const flexMin = Math.max(0.15, bandMin - CLAMP_FLEX)
+  const flexMax = Math.min(0.88, bandMax + CLAMP_FLEX)
   return Math.max(flexMin, Math.min(flexMax, confidence))
 }
 
@@ -137,7 +124,6 @@ function formatIndicators(ind: ComputedIndicators, anchorPrice: number): string 
   const bbPosition = ind.volatility.bollingerUpper !== ind.volatility.bollingerLower
     ? ((anchorPrice - ind.volatility.bollingerLower) / (ind.volatility.bollingerUpper - ind.volatility.bollingerLower) * 100).toFixed(0)
     : '50'
-
   return [
     '--- Trend ---',
     `SMA50: ${ind.trend.sma50.toFixed(2)} (price ${priceVsSma50}% vs SMA50)`,
@@ -187,19 +173,50 @@ function formatRiskContext(assessment?: RiskAssessment, verdict?: RiskVerdict): 
 }
 
 function formatSignalAlignment(alignment: SignalAlignment): string {
-  const lines = [
+  return [
     `Composite score: ${(alignment.score * 100).toFixed(0)}% → suggested band: ${alignment.suggestedBand.toUpperCase()}`,
     `Target price range (ATR-based): $${alignment.targetPriceRange[0].toFixed(2)} – $${alignment.targetPriceRange[1].toFixed(2)}`,
     `Support: $${alignment.support.toFixed(2)} | Resistance: $${alignment.resistance.toFixed(2)}`,
     '',
     'Signal breakdown:',
     ...alignment.breakdown.map((line) => `  • ${line}`),
+  ].join('\n')
+}
+
+function formatPastPerformance(stats: TickerAccuracyStats, ticker: string): string {
+  const lines: string[] = [
+    `=== PAST PERFORMANCE (last ${stats.sampleSize} scored forecasts for ${ticker}) ===`,
+    `Directional hit rate: ${(stats.directionalHitRate * 100).toFixed(0)}% (n=${stats.sampleSize})`,
+    'Calibration by confidence bucket:',
   ]
+  const buckets: Array<[string, typeof stats.calibrationByBucket.high]> = [
+    ['HIGH     ', stats.calibrationByBucket.high],
+    ['MODERATE ', stats.calibrationByBucket.moderate],
+    ['LOW      ', stats.calibrationByBucket.low],
+  ]
+  for (const [label, b] of buckets) {
+    if (b === null) continue
+    const gap = b.promised - b.actual
+    const flag = Math.abs(gap) >= 0.15
+      ? (gap > 0 ? '  ← overconfident' : '  ← underconfident')
+      : ''
+    lines.push(`  ${label} (n=${b.n}): promised ${(b.promised * 100).toFixed(0)}%, actual ${(b.actual * 100).toFixed(0)}%${flag}`)
+  }
+  if (stats.targetBandHitRate !== null) {
+    lines.push(`Target-band hit rate: ${(stats.targetBandHitRate * 100).toFixed(0)}%`)
+  }
+  lines.push('')
+  lines.push('You MUST acknowledge these stats in your reasoning. If a bucket shows systematic')
+  lines.push('miscalibration (|promised − actual| ≥ 15%), adjust your confidence accordingly.')
   return lines.join('\n')
 }
 
-function buildSystemPrompt(input: SynthesizeInput, alignment: SignalAlignment): string {
-  return [
+function buildSystemPrompt(
+  input: SynthesizeInput,
+  alignment: SignalAlignment,
+  accuracyStats: TickerAccuracyStats | null,
+): string {
+  const lines = [
     `You are an expert short-term market forecaster. Predict the NEXT TRADING SESSION direction for ${input.ticker} (${input.market}).`,
     '',
     '=== PRE-COMPUTED SIGNAL ALIGNMENT ===',
@@ -232,7 +249,7 @@ function buildSystemPrompt(input: SynthesizeInput, alignment: SignalAlignment): 
     '',
     '=== CONFIDENCE CALIBRATION (MANDATORY) ===',
     `The pre-computed signal alignment score for ${input.ticker} is ${(alignment.score * 100).toFixed(0)}% (band: ${alignment.suggestedBand.toUpperCase()}).`,
-    'You MUST use this as your starting anchor. You may adjust ±10% based on news and qualitative factors, but you MUST justify any adjustment.',
+    'You MUST use this as your starting anchor. You may adjust ±3% based on news and qualitative factors, but you MUST justify any adjustment.',
     '',
     'Band mapping (your confidence MUST fall within this band unless you explain why):',
     '  HIGH (0.70-0.85): signal score ≥ 70% — all signals align',
@@ -240,7 +257,14 @@ function buildSystemPrompt(input: SynthesizeInput, alignment: SignalAlignment): 
     '  LOW (0.30-0.49): signal score 30-49% — mixed or contradictory signals',
     '  VERY LOW (0.15-0.29): signal score < 30% — use "flat" direction',
     '',
-    'NEVER assign confidence > 0.85 for a next-day forecast.',
+    'NEVER assign confidence > 0.88 for a next-day forecast.',
+  ]
+
+  if (accuracyStats) {
+    lines.push('', formatPastPerformance(accuracyStats, input.ticker))
+  }
+
+  lines.push(
     '',
     '=== TARGET PRICE RULES ===',
     `The ATR-based 1-day target range is $${alignment.targetPriceRange[0].toFixed(2)} – $${alignment.targetPriceRange[1].toFixed(2)}.`,
@@ -265,7 +289,73 @@ function buildSystemPrompt(input: SynthesizeInput, alignment: SignalAlignment): 
     '  "reasoning": string, // cite specific indicators and explain any deviation from the signal alignment score',
     '  "changeFromBaseline": "strengthened" | "weakened" | "reversed" | "unchanged"',
     '}',
-  ].join('\n')
+  )
+  return lines.join('\n')
+}
+
+type ParsedForecast = {
+  direction: ForecastDirection
+  confidence: number
+  raw: RawForecast
+}
+
+function parseResponse(response: string): ParsedForecast | null {
+  let parsed: unknown
+  try {
+    parsed = parseJson<unknown>(response)
+  } catch {
+    return null
+  }
+  if (!isRecord(parsed)) return null
+  const raw = parsed as RawForecast
+  const direction = normalizeDirection(raw.predictedDirection)
+  const confidence = normalizeConfidence(raw.confidence)
+  if (!direction.valid || !confidence.valid) return null
+  return { direction: direction.value, confidence: confidence.value, raw }
+}
+
+async function loadAccuracyStats(
+  deps: NextDayForecastSynthesizerDeps,
+  input: SynthesizeInput,
+): Promise<TickerAccuracyStats | null> {
+  if (!deps.accuracyProvider) return null
+  try {
+    return await deps.accuracyProvider.getStats(input.ticker, input.market)
+  } catch (err) {
+    log.warn({ ticker: input.ticker, error: getErrorMessage(err) }, 'Accuracy provider failed')
+    return null
+  }
+}
+
+function buildAbstain(input: SynthesizeInput): AbstainForecast {
+  return {
+    predictedDirection: 'abstain',
+    abstainReason: 'malformed-llm-output',
+    referencePrice: input.latestClose,
+    targetSession: input.targetSession.toISOString().slice(0, 10),
+    baselineAction: input.baselineAction,
+    baselineReferencePrice: input.baselineReferencePrice,
+  }
+}
+
+function buildSuccess(
+  input: SynthesizeInput,
+  alignment: SignalAlignment,
+  parsed: ParsedForecast,
+): NextDayForecastSuccess {
+  const confidence = clampToAlignmentBand(parsed.confidence, alignment)
+  return {
+    predictedDirection: parsed.direction,
+    referencePrice: input.latestClose,
+    targetPrice: normalizeTargetPrice(parsed.raw.targetPrice, input.latestClose, parsed.direction, alignment.targetPriceRange),
+    targetSession: input.targetSession.toISOString().slice(0, 10),
+    confidence,
+    reasoning: normalizeReasoning(parsed.raw.reasoning),
+    baselineAction: input.baselineAction,
+    baselineReferencePrice: input.baselineReferencePrice,
+    changeFromBaseline: normalizeStrength(parsed.raw.changeFromBaseline),
+    atrRange: [alignment.targetPriceRange[0], alignment.targetPriceRange[1]] as const,
+  }
 }
 
 export class NextDayForecastSynthesizer {
@@ -282,47 +372,25 @@ export class NextDayForecastSynthesizer {
       baselineRiskVerdict: input.baselineRiskVerdict,
       marketTrends: input.marketTrends,
     })
+    const accuracyStats = await loadAccuracyStats(this.deps, input)
+    const systemPrompt = buildSystemPrompt(input, alignment, accuracyStats)
 
-    const response = await this.deps.llm.chat([
-      {
-        role: 'system',
-        content: buildSystemPrompt(input, alignment),
-      },
-      {
-        role: 'user',
-        content: `Forecast the next trading session for ${input.ticker}. JSON only.`,
-      },
+    const first = await this.deps.llm.chat([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Forecast the next trading session for ${input.ticker}. JSON only.` },
     ])
+    const firstParsed = parseResponse(first)
+    if (firstParsed) return buildSuccess(input, alignment, firstParsed)
 
-    let parsed: unknown
-    try {
-      parsed = parseJson<unknown>(response)
-    } catch {
-      parsed = {}
-    }
+    log.warn({ ticker: input.ticker }, 'First forecast parse failed; retrying')
+    const retry = await this.deps.llm.chat([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `JSON ONLY. No prose. Start with '{'. Forecast the next trading session for ${input.ticker}.` },
+    ])
+    const retryParsed = parseResponse(retry)
+    if (retryParsed) return buildSuccess(input, alignment, retryParsed)
 
-    const raw = isRecord(parsed) ? (parsed as RawForecast) : {}
-    const direction = normalizeDirection(raw.predictedDirection)
-    const confidenceCandidate = normalizeConfidence(raw.confidence)
-    const malformed = !isRecord(parsed) || !direction.valid || !confidenceCandidate.valid
-
-    const predictedDirection = malformed ? 'flat' : direction.value
-    const confidence = malformed
-      ? MALFORMED_FORECAST_CONFIDENCE
-      : clampToAlignmentBand(confidenceCandidate.value, alignment)
-
-    return {
-      predictedDirection,
-      referencePrice: input.latestClose,
-      targetPrice: malformed
-        ? input.latestClose
-        : normalizeTargetPrice(raw.targetPrice, input.latestClose, predictedDirection, alignment.targetPriceRange),
-      targetSession: input.targetSession.toISOString().slice(0, 10),
-      confidence,
-      reasoning: malformed ? MALFORMED_FORECAST_REASONING : normalizeReasoning(raw.reasoning),
-      baselineAction: input.baselineAction,
-      baselineReferencePrice: input.baselineReferencePrice,
-      changeFromBaseline: malformed ? 'unchanged' : normalizeStrength(raw.changeFromBaseline),
-    }
+    log.error({ ticker: input.ticker }, 'Forecast abstained after malformed retry')
+    return buildAbstain(input)
   }
 }

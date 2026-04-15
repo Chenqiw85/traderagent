@@ -11,9 +11,11 @@ import type {
   IndexDef,
   MarketTrend,
   NextDayForecast,
+  NextDayForecastSuccess,
   TickerAdvisory,
   WatchlistEntry,
 } from './types.js'
+import { isAbstainForecast } from './types.js'
 import { formatAdvisorReport } from './ReportFormatter.js'
 import { parseJson } from '../../utils/parseJson.js'
 import { getErrorMessage } from '../../utils/errors.js'
@@ -23,7 +25,7 @@ import { nextTradingSessionDate } from './tradingCalendar.js'
 
 const log = createLogger('advisor-agent')
 
-function projectDecisionFromForecast(forecast: NextDayForecast): Decision {
+function projectDecisionFromForecast(forecast: NextDayForecastSuccess): Decision {
   const action: Decision['action'] =
     forecast.predictedDirection === 'down'
       ? 'SELL'
@@ -162,23 +164,40 @@ export class AdvisorAgent {
             marketTrends,
           })
 
-          tickerAdvisories.push({
-            ticker: entry.ticker,
-            market: entry.market,
-            decision: projectDecisionFromForecast(forecast),
-            keyFindings: [
-              `Baseline action: ${decision.action}`,
-              `Baseline thesis: ${baselineSummary}`,
-              `Fresh move: ${overlay.changePercent >= 0 ? '+' : ''}${overlay.changePercent.toFixed(2)}%`,
-            ],
-            forecast,
-            baselineAsOf: baseline.asOf,
-            baselineSource: baseline.source,
-            baselineDecision: decision,
-            baselineProposal: baseline.report.traderProposal,
-            baselineThesis: baseline.report.researchThesis,
-            baselineRiskVerdict: baseline.report.riskVerdict,
-          })
+          if (isAbstainForecast(forecast)) {
+            log.error({ ticker: entry.ticker, reason: forecast.abstainReason }, 'Advisor forecast abstained')
+            tickerAdvisories.push({
+              ticker: entry.ticker,
+              market: entry.market,
+              decision: { action: 'HOLD', confidence: 0, reasoning: 'Forecast abstained due to malformed LLM output.' },
+              keyFindings: [`Baseline action: ${decision.action}`, 'Forecast abstained'],
+              forecast,
+              baselineAsOf: baseline.asOf,
+              baselineSource: baseline.source,
+              baselineDecision: decision,
+              baselineProposal: baseline.report.traderProposal,
+              baselineThesis: baseline.report.researchThesis,
+              baselineRiskVerdict: baseline.report.riskVerdict,
+            })
+          } else {
+            tickerAdvisories.push({
+              ticker: entry.ticker,
+              market: entry.market,
+              decision: projectDecisionFromForecast(forecast),
+              keyFindings: [
+                `Baseline action: ${decision.action}`,
+                `Baseline thesis: ${baselineSummary}`,
+                `Fresh move: ${overlay.changePercent >= 0 ? '+' : ''}${overlay.changePercent.toFixed(2)}%`,
+              ],
+              forecast,
+              baselineAsOf: baseline.asOf,
+              baselineSource: baseline.source,
+              baselineDecision: decision,
+              baselineProposal: baseline.report.traderProposal,
+              baselineThesis: baseline.report.researchThesis,
+              baselineRiskVerdict: baseline.report.riskVerdict,
+            })
+          }
         } catch (err) {
           log.error({ ticker: entry.ticker, error: getErrorMessage(err) }, 'Advisor forecast failed')
         }
@@ -230,21 +249,18 @@ export class AdvisorAgent {
       .map((t) => `${t.name} (${t.ticker}): ${t.direction}, ${t.changePercent >= 0 ? '+' : ''}${t.changePercent.toFixed(2)}%, RSI=${t.rsi.toFixed(0)}`)
       .join('\n')
 
-    const advisoryBlock = advisories
-      .map((a) => {
-        if (a.forecast) {
-          return [
-            `${a.ticker}: baseline ${a.baselineDecision?.action ?? a.decision.action} (${((a.baselineDecision?.confidence ?? a.decision.confidence) * 100).toFixed(0)}%)`,
-            `next session ${a.forecast.predictedDirection} from $${a.forecast.referencePrice.toFixed(2)} (${(a.forecast.confidence * 100).toFixed(0)}%)`,
-            `${a.forecast.reasoning}`,
-          ].join(' — ')
-        }
-
-        const delta = a.dailyUpdate
-          ? ` [was: ${a.dailyUpdate.previousDecision.action}, change: ${a.dailyUpdate.indicatorDelta.changePercent >= 0 ? '+' : ''}${a.dailyUpdate.indicatorDelta.changePercent.toFixed(2)}%]`
-          : ''
-        return `${a.ticker}: ${a.decision.action} (${(a.decision.confidence * 100).toFixed(0)}%) — ${a.decision.reasoning}${delta}`
-      })
+    const actionable = advisories.filter(
+      (a): a is typeof a & { forecast: NextDayForecastSuccess } =>
+        a.forecast != null && !isAbstainForecast(a.forecast),
+    )
+    const advisoryBlock = actionable
+      .map((a) =>
+        [
+          `${a.ticker}: baseline ${a.baselineDecision?.action ?? a.decision.action} (${((a.baselineDecision?.confidence ?? a.decision.confidence) * 100).toFixed(0)}%)`,
+          `next session ${a.forecast.predictedDirection} from $${a.forecast.referencePrice.toFixed(2)} (${(a.forecast.confidence * 100).toFixed(0)}%)`,
+          `${a.forecast.reasoning}`,
+        ].join(' — '),
+      )
       .join('\n')
 
     const response = await this.llm.chat([

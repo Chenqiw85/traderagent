@@ -180,6 +180,9 @@ model AdvisorForecast {
   baselineAction     String
   baselineAsOf       DateTime
   changeFromBaseline String
+  atrRangeLow        Float?
+  atrRangeHigh       Float?
+  scoringStatus      String?
   actualClose        Float?
   actualDirection    String?
   scoredAt           DateTime?
@@ -187,4 +190,5 @@ model AdvisorForecast {
 
   @@index([ticker, market, issuedAt])
   @@index([targetSession, market])
+  @@index([scoringStatus, targetSession])
 }

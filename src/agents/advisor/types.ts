@@ -102,7 +102,9 @@ export type FreshMarketOverlay = {
   readonly newsItems: string[]
 }
 
-export type NextDayForecast = {
+export type AtrRange = readonly [number, number]
+
+export type NextDayForecastSuccess = {
   readonly predictedDirection: ForecastDirection
   readonly referencePrice: number
   readonly targetPrice: number
@@ -112,6 +114,22 @@ export type NextDayForecast = {
   readonly baselineAction: Decision['action']
   readonly baselineReferencePrice?: number
   readonly changeFromBaseline: BaselineStrength
+  readonly atrRange?: AtrRange
+}
+
+export type AbstainForecast = {
+  readonly predictedDirection: 'abstain'
+  readonly abstainReason: 'malformed-llm-output'
+  readonly referencePrice: number
+  readonly targetSession: string
+  readonly baselineAction: Decision['action']
+  readonly baselineReferencePrice?: number
+}
+
+export type NextDayForecast = NextDayForecastSuccess | AbstainForecast
+
+export function isAbstainForecast(forecast: NextDayForecast): forecast is AbstainForecast {
+  return forecast.predictedDirection === 'abstain'
 }
 
 export type DailyTickerUpdate = {

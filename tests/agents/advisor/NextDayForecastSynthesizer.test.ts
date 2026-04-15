@@ -55,6 +55,7 @@ describe('NextDayForecastSynthesizer', () => {
       marketTrends: stubMarketTrends,
     })
 
+    if (forecast.predictedDirection === 'abstain') throw new Error('expected success')
     expect(forecast.referencePrice).toBe(183)
     expect(forecast.targetPrice).toBe(183)
     expect(forecast.predictedDirection).toBe('up')
@@ -62,7 +63,7 @@ describe('NextDayForecastSynthesizer', () => {
     expect(forecast.changeFromBaseline).toBe('strengthened')
   })
 
-  it('normalizes invalid forecast fields from the LLM response', async () => {
+  it('returns abstain when LLM output is malformed twice', async () => {
     const synth = new NextDayForecastSynthesizer({
       llm: mockLLM(
         JSON.stringify({
@@ -90,12 +91,11 @@ describe('NextDayForecastSynthesizer', () => {
       marketTrends: stubMarketTrends,
     })
 
-    expect(forecast.predictedDirection).toBe('flat')
-    expect(forecast.referencePrice).toBe(183)
-    expect(forecast.targetPrice).toBe(183)
-    expect(forecast.confidence).toBe(0.2)
-    expect(forecast.reasoning).toContain('malformed output')
-    expect(forecast.changeFromBaseline).toBe('unchanged')
+    expect(forecast.predictedDirection).toBe('abstain')
+    if (forecast.predictedDirection === 'abstain') {
+      expect(forecast.abstainReason).toBe('malformed-llm-output')
+      expect(forecast.referencePrice).toBe(183)
+    }
   })
 
   it('normalizes percentage confidence and rejects off-market reference prices', async () => {
@@ -126,13 +126,14 @@ describe('NextDayForecastSynthesizer', () => {
       marketTrends: stubMarketTrends,
     })
 
+    if (forecast.predictedDirection === 'abstain') throw new Error('expected success')
     expect(forecast.predictedDirection).toBe('down')
     expect(forecast.referencePrice).toBe(183)
     // 210 is outside ATR range and 2% band, so targetPrice falls back to latest close
     expect(forecast.targetPrice).toBe(183)
-    // 0.71 gets clamped to alignment band
+    // 0.71 gets clamped to alignment band (±3% flex, hard cap 0.88)
     expect(forecast.confidence).toBeGreaterThanOrEqual(0.15)
-    expect(forecast.confidence).toBeLessThanOrEqual(0.85)
+    expect(forecast.confidence).toBeLessThanOrEqual(0.88)
     expect(forecast.changeFromBaseline).toBe('weakened')
   })
 
@@ -164,9 +165,10 @@ describe('NextDayForecastSynthesizer', () => {
       marketTrends: stubMarketTrends,
     })
 
-    // 50 normalizes to 0.50, then gets clamped to alignment band
+    if (forecast.predictedDirection === 'abstain') throw new Error('expected success')
+    // 50 normalizes to 0.50, then gets clamped to alignment band (±3% flex, hard cap 0.88)
     expect(forecast.confidence).toBeGreaterThanOrEqual(0.15)
-    expect(forecast.confidence).toBeLessThanOrEqual(0.85)
+    expect(forecast.confidence).toBeLessThanOrEqual(0.88)
   })
 
   it('accepts LLM target price within ATR-based target range', async () => {
@@ -198,6 +200,7 @@ describe('NextDayForecastSynthesizer', () => {
       marketTrends: stubMarketTrends,
     })
 
+    if (forecast.predictedDirection === 'abstain') throw new Error('expected success')
     // referencePrice is always the session anchor (latestClose)
     expect(forecast.referencePrice).toBe(183)
     // 184.5 is within ATR range [181, 185], so should be accepted as targetPrice
@@ -232,9 +235,188 @@ describe('NextDayForecastSynthesizer', () => {
       marketTrends: stubMarketTrends,
     })
 
+    if (forecast.predictedDirection === 'abstain') throw new Error('expected success')
     expect(forecast.predictedDirection).toBe('down')
     expect(forecast.referencePrice).toBe(183)
     expect(forecast.targetPrice).toBe(183)
+  })
+
+  it('injects PAST PERFORMANCE block when accuracy provider returns stats', async () => {
+    const chatSpy = vi.fn().mockResolvedValue(JSON.stringify({
+      predictedDirection: 'up',
+      confidence: 0.7,
+      reasoning: 'r',
+      targetPrice: 183,
+      changeFromBaseline: 'unchanged',
+    }))
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat: chatSpy, chatStream: vi.fn() as any },
+      accuracyProvider: {
+        getStats: vi.fn().mockResolvedValue({
+          sampleSize: 18,
+          directionalHitRate: 0.58,
+          calibrationByBucket: {
+            high: { promised: 0.77, actual: 0.50, n: 6 },
+            moderate: { promised: 0.60, actual: 0.67, n: 9 },
+            low: { promised: 0.35, actual: 0.33, n: 3 },
+          },
+          targetBandHitRate: 0.61,
+        }),
+      },
+    })
+
+    await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    const systemPrompt = chatSpy.mock.calls[0][0][0].content as string
+    expect(systemPrompt).toMatch(/PAST PERFORMANCE/i)
+    expect(systemPrompt).toContain('58%')
+    expect(systemPrompt).toContain('n=18')
+    expect(systemPrompt).toContain('HIGH')
+    expect(systemPrompt).toContain('61%')
+  })
+
+  it('omits PAST PERFORMANCE block when accuracy provider returns null', async () => {
+    const chatSpy = vi.fn().mockResolvedValue(JSON.stringify({
+      predictedDirection: 'up', confidence: 0.7, reasoning: 'r',
+      targetPrice: 183, changeFromBaseline: 'unchanged',
+    }))
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat: chatSpy, chatStream: vi.fn() as any },
+      accuracyProvider: { getStats: vi.fn().mockResolvedValue(null) },
+    })
+
+    await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    const systemPrompt = chatSpy.mock.calls[0][0][0].content as string
+    expect(systemPrompt).not.toMatch(/PAST PERFORMANCE/i)
+  })
+
+  it('continues synthesis when accuracyProvider.getStats rejects', async () => {
+    const chatSpy = vi.fn().mockResolvedValue(JSON.stringify({
+      predictedDirection: 'up', confidence: 0.7, reasoning: 'r',
+      targetPrice: 183, changeFromBaseline: 'unchanged',
+    }))
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat: chatSpy, chatStream: vi.fn() as any },
+      accuracyProvider: { getStats: vi.fn().mockRejectedValue(new Error('db')) },
+    })
+
+    const forecast = await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    expect(forecast.predictedDirection).toBe('up')
+  })
+
+  it('retries once when the first LLM response is malformed, then succeeds', async () => {
+    const chat = vi.fn()
+      .mockResolvedValueOnce('not json')
+      .mockResolvedValueOnce(JSON.stringify({
+        predictedDirection: 'up', confidence: 0.7, reasoning: 'r',
+        targetPrice: 183, changeFromBaseline: 'unchanged',
+      }))
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat, chatStream: vi.fn() as any },
+    })
+
+    const forecast = await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(forecast.predictedDirection).toBe('up')
+    const retryUser = chat.mock.calls[1][0].find((m: any) => m.role === 'user')?.content
+    expect(retryUser).toContain('JSON ONLY')
+  })
+
+  it('returns AbstainForecast when malformed twice', async () => {
+    const chat = vi.fn()
+      .mockResolvedValueOnce('not json')
+      .mockResolvedValueOnce('also not json')
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat, chatStream: vi.fn() as any },
+    })
+
+    const forecast = await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    expect(forecast.predictedDirection).toBe('abstain')
+    if (forecast.predictedDirection === 'abstain') {
+      expect(forecast.abstainReason).toBe('malformed-llm-output')
+      expect(forecast.referencePrice).toBe(183)
+    }
+  })
+
+  it('emits atrRange derived from signal alignment in the successful forecast', async () => {
+    const chat = vi.fn().mockResolvedValue(JSON.stringify({
+      predictedDirection: 'up', confidence: 0.7, reasoning: 'r',
+      targetPrice: 184, changeFromBaseline: 'unchanged',
+    }))
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat, chatStream: vi.fn() as any },
+    })
+
+    const forecast = await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    if (forecast.predictedDirection !== 'abstain') {
+      expect(forecast.atrRange?.[0]).toBeGreaterThan(0)
+      expect(forecast.atrRange?.[1]).toBeGreaterThan(forecast.atrRange?.[0] ?? 0)
+    } else {
+      throw new Error('expected success')
+    }
+  })
+
+  it('clamps confidence with ±3% flex (high band cannot exceed 0.88)', async () => {
+    const chat = vi.fn().mockResolvedValue(JSON.stringify({
+      predictedDirection: 'up', confidence: 0.99, reasoning: 'r',
+      targetPrice: 183.5, changeFromBaseline: 'unchanged',
+    }))
+    const synth = new NextDayForecastSynthesizer({
+      llm: { name: 'm', chat, chatStream: vi.fn() as any },
+    })
+
+    const forecast = await synth.synthesize({
+      ticker: 'AAPL', market: 'US',
+      targetSession: new Date('2026-04-13T00:00:00Z'),
+      baselineAction: 'BUY', latestClose: 183, previousClose: 181, changePercent: 1.1,
+      newsItems: [], baselineSummary: '', overlaySummary: '',
+      indicators: stubIndicators, marketTrends: stubMarketTrends,
+    })
+
+    if (forecast.predictedDirection !== 'abstain') {
+      expect(forecast.confidence).toBeLessThanOrEqual(0.88)
+    }
   })
 })
 

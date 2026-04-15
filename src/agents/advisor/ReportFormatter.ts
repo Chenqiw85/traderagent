@@ -1,6 +1,7 @@
 // src/agents/advisor/ReportFormatter.ts
 
 import type { AdvisorReport, MarketTrend, TickerAdvisory } from './types.js'
+import { isAbstainForecast } from './types.js'
 
 const DIRECTION_ICON: Record<MarketTrend['direction'], string> = {
   bullish: '🟢',
@@ -78,6 +79,7 @@ export function formatAdvisorReport(report: AdvisorReport): string {
     const hasForecasts = report.tickerAdvisories.some((advisory) => advisory.forecast)
     lines.push(hasForecasts ? '━━━ *Next-Day Forecasts* ━━━' : '━━━ *Recommendations* ━━━')
     for (const advisory of report.tickerAdvisories) {
+      if (advisory.forecast && isAbstainForecast(advisory.forecast)) continue
       if (!advisory.forecast) {
         formatLegacyAdvisory(lines, advisory)
         continue
